@@ -141,11 +141,16 @@ local Library = {
 
 pcall(function() Library.DevicePlatform = InputService:GetPlatform(); end); -- For safety so the UI library doesn't error.
 Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS);
-Library.MinSize = if Library.IsMobile then Vector2.new(550, 200) else Vector2.new(550, 300);
+-- Mobile: slightly larger window min; PC: standard Linoria min for resize handle
+Library.MinSize = if Library.IsMobile then Vector2.new(580, 280) else Vector2.new(550, 300);
 
 local RainbowStep = 0
 local Hue = 0
-local DPIScale = 1
+-- Mobile: slightly larger text/controls (not huge)
+local DPIScale = Library.IsMobile and 1.1 or 1
+if Library.IsMobile then
+    Library.MinSize = Vector2.new(580, 280) * DPIScale;
+end
 
 table.insert(Library.Signals, RenderStepped:Connect(function(Delta)
     RainbowStep = RainbowStep + Delta
@@ -4721,32 +4726,36 @@ do
         return Depbox;
     end;
 
-    -- ========================= ESP PREVIEW (1up feature) =========================
+    -- ========================= ESP PREVIEW (1up-style) =========================
     function BaseGroupboxFuncs:AddESPPreview(Name)
         local Groupbox = self;
         local Container = Groupbox.Container;
         Name = typeof(Name) == "string" and Name or "ESP Preview";
 
         local Preview = {
-            State = {
+            ESP = {
                 Enabled = false;
                 Box = false;
                 Corner = false;
-                Chams = false;
                 Names = false;
                 Health = false;
                 HealthText = false;
                 Distance = false;
+                Chams = false;
                 Skeleton = false;
                 Rainbow = false;
+                Weapons = false;
+                Flags = false;
+                TeamCheck = false;
             };
+            _ChamsCache = {};
         };
 
         local Holder = Library:Create('Frame', {
             BackgroundColor3 = Library.MainColor;
             BorderColor3 = Library.OutlineColor;
             BorderMode = Enum.BorderMode.Inset;
-            Size = UDim2.new(1, -4, 0, 170);
+            Size = UDim2.new(1, -4, 0, 220);
             ZIndex = 4;
             Parent = Container;
         });
@@ -4763,268 +4772,468 @@ do
 
         Library:CreateLabel({
             BackgroundTransparency = 1;
-            Position = UDim2.new(0, 6, 0, 2);
-            Size = UDim2.new(1, -12, 0, 16);
+            Position = UDim2.new(0, 8, 0, 4);
+            Size = UDim2.new(1, -16, 0, 16);
             Text = Name;
             TextSize = 13;
             TextXAlignment = Enum.TextXAlignment.Left;
+            TextTransparency = 0.25;
             ZIndex = 5;
             Parent = Holder;
+        });
+
+        local Bg = Library:Create('Frame', {
+            BackgroundColor3 = Color3.fromRGB(18, 18, 22);
+            BorderSizePixel = 0;
+            Position = UDim2.new(0, 6, 0, 24);
+            Size = UDim2.new(1, -12, 1, -30);
+            ZIndex = 5;
+            Parent = Holder;
+        });
+        Library:Create('UICorner', {
+            CornerRadius = UDim.new(0, 5);
+            Parent = Bg;
         });
 
         local Viewport = Library:Create('ViewportFrame', {
-            BackgroundColor3 = Color3.fromRGB(12, 12, 16);
-            BorderSizePixel = 0;
-            Position = UDim2.new(0, 6, 0, 20);
-            Size = UDim2.new(1, -12, 1, -26);
+            BackgroundTransparency = 1;
+            Size = UDim2.fromScale(1, 1);
             ZIndex = 5;
-            Parent = Holder;
+            BorderSizePixel = 0;
+            Parent = Bg;
         });
-
-        Library:Create('UICorner', {
-            CornerRadius = UDim.new(0, 4);
-            Parent = Viewport;
-        });
-
-        local World = Instance.new('WorldModel');
-        World.Parent = Viewport;
-
-        local Cam = Instance.new('Camera');
-        Cam.Parent = Viewport;
-        Viewport.CurrentCamera = Cam;
-
-        local Dummy = Instance.new('Model');
-        Dummy.Name = 'ESPPreviewDummy';
-        Dummy.Parent = World;
-
-        local function part(name, size, cf, color)
-            local p = Instance.new('Part');
-            p.Name = name;
-            p.Size = size;
-            p.CFrame = cf;
-            p.Anchored = true;
-            p.CanCollide = false;
-            p.Material = Enum.Material.SmoothPlastic;
-            p.Color = color or Color3.fromRGB(180, 180, 190);
-            p.Parent = Dummy;
-            return p;
-        end;
-
-        local root = part('HumanoidRootPart', Vector3.new(2, 2, 1), CFrame.new(0, 3, 0), Color3.fromRGB(40, 40, 48));
-        root.Transparency = 1;
-        part('UpperTorso', Vector3.new(2, 2, 1), CFrame.new(0, 3.2, 0));
-        part('Head', Vector3.new(1.2, 1.2, 1.2), CFrame.new(0, 4.7, 0), Color3.fromRGB(210, 180, 150));
-        part('LeftUpperArm', Vector3.new(1, 2, 1), CFrame.new(-1.5, 3.2, 0));
-        part('RightUpperArm', Vector3.new(1, 2, 1), CFrame.new(1.5, 3.2, 0));
-        part('LeftUpperLeg', Vector3.new(1, 2, 1), CFrame.new(-0.5, 1.2, 0));
-        part('RightUpperLeg', Vector3.new(1, 2, 1), CFrame.new(0.5, 1.2, 0));
-
-        Cam.CFrame = CFrame.new(Vector3.new(3.5, 3.5, 6), Vector3.new(0, 3.2, 0));
 
         local Overlay = Library:Create('Frame', {
             BackgroundTransparency = 1;
             Size = UDim2.fromScale(1, 1);
-            ZIndex = 6;
-            Parent = Viewport;
+            ZIndex = 50;
+            BorderSizePixel = 0;
+            Parent = Bg;
         });
 
+        -- Full box
         local BoxFrame = Library:Create('Frame', {
             BackgroundTransparency = 1;
             BorderSizePixel = 0;
-            Size = UDim2.new(0, 70, 0, 110);
-            Position = UDim2.new(0.5, -35, 0.5, -55);
-            ZIndex = 7;
+            Size = UDim2.new(0.42, 0, 0.72, 0);
+            Position = UDim2.new(0.29, 0, 0.14, 0);
             Visible = false;
+            ZIndex = 6;
             Parent = Overlay;
         });
         local BoxStroke = Library:Create('UIStroke', {
-            Color = Library.AccentColor;
-            Thickness = 1.5;
+            Color = Color3.fromRGB(255, 255, 255);
+            Thickness = 2;
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border;
             Parent = BoxFrame;
         });
-        Library:AddToRegistry(BoxStroke, { Color = 'AccentColor' });
 
-        local function mkCorner(x, y, w, h)
-            local f = Library:Create('Frame', {
-                BackgroundColor3 = Library.AccentColor;
-                BorderSizePixel = 0;
-                Position = UDim2.new(x, 0, y, 0);
-                Size = UDim2.new(0, w, 0, h);
-                ZIndex = 8;
-                Visible = false;
-                Parent = BoxFrame;
-            });
-            Library:AddToRegistry(f, { BackgroundColor3 = 'AccentColor' });
-            return f;
-        end;
-        local corners = {
-            mkCorner(0, 0, 12, 2); mkCorner(0, 0, 2, 12);
-            mkCorner(1, 0, -12, 2); mkCorner(1, 0, -2, 12);
-            mkCorner(0, 1, 12, -2); mkCorner(0, 1, 2, -12);
-            mkCorner(1, 1, -12, -2); mkCorner(1, 1, -2, -12);
+        -- Corner box
+        local Corners = Library:Create('Frame', {
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0.42, 0, 0.72, 0);
+            Position = UDim2.new(0.29, 0, 0.14, 0);
+            Visible = false;
+            ZIndex = 6;
+            Parent = Overlay;
+        });
+        local cornersSpec = {
+            {0, 0, 0.3, 0.015, 0, 0}; {0, 0, 0.015, 0.22, 0, 0};
+            {1, 0, 0.3, 0.015, 1, 0}; {1, 0, 0.015, 0.22, 1, 0};
+            {0, 1, 0.3, 0.015, 0, 1}; {0, 1, 0.015, 0.22, 0, 1};
+            {1, 1, 0.3, 0.015, 1, 1}; {1, 1, 0.015, 0.22, 1, 1};
         };
+        for _, s in ipairs(cornersSpec) do
+            Library:Create('Frame', {
+                BackgroundColor3 = Color3.fromRGB(255, 255, 255);
+                BorderSizePixel = 0;
+                Position = UDim2.new(s[1], 0, s[2], 0);
+                Size = UDim2.new(s[3], 0, s[4], 0);
+                AnchorPoint = Vector2.new(s[5], s[6]);
+                ZIndex = 6;
+                Parent = Corners;
+            });
+        end;
 
         local NameLabel = Library:CreateLabel({
             BackgroundTransparency = 1;
-            Position = UDim2.new(0.5, -40, 0.5, -72);
-            Size = UDim2.new(0, 80, 0, 14);
-            Text = 'Player';
+            Size = UDim2.new(1, 0, 0, 16);
+            Position = UDim2.new(0, 0, 0, 4);
+            Text = (LocalPlayer and LocalPlayer.Name) or 'Player';
             TextSize = 12;
             TextXAlignment = Enum.TextXAlignment.Center;
             Visible = false;
-            ZIndex = 8;
+            ZIndex = 7;
             Parent = Overlay;
         });
 
         local DistLabel = Library:CreateLabel({
             BackgroundTransparency = 1;
-            Position = UDim2.new(0.5, -40, 0.5, 58);
-            Size = UDim2.new(0, 80, 0, 14);
-            Text = '25m';
+            Size = UDim2.new(1, 0, 0, 14);
+            Position = UDim2.new(0, 0, 1, -18);
+            Text = '12m';
             TextSize = 11;
+            TextColor3 = Color3.fromRGB(200, 200, 200);
             TextXAlignment = Enum.TextXAlignment.Center;
             Visible = false;
-            ZIndex = 8;
+            ZIndex = 7;
             Parent = Overlay;
         });
 
-        local HealthBarBG = Library:Create('Frame', {
-            BackgroundColor3 = Color3.fromRGB(30, 30, 30);
+        local HealthBarBg = Library:Create('Frame', {
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20);
             BorderSizePixel = 0;
-            Position = UDim2.new(0.5, -42, 0.5, -55);
-            Size = UDim2.new(0, 4, 0, 110);
+            Size = UDim2.new(0, 4, 0.72, 0);
+            Position = UDim2.new(0.29, -8, 0.14, 0);
             Visible = false;
-            ZIndex = 7;
+            ZIndex = 6;
             Parent = Overlay;
         });
         Library:Create('Frame', {
             BackgroundColor3 = Color3.fromRGB(80, 255, 80);
             BorderSizePixel = 0;
-            Position = UDim2.new(0, 0, 0.15, 0);
-            Size = UDim2.new(1, 0, 0.85, 0);
-            ZIndex = 8;
-            Parent = HealthBarBG;
+            Size = UDim2.new(1, 0, 0.75, 0);
+            Position = UDim2.new(0, 0, 0.25, 0);
+            ZIndex = 7;
+            Parent = HealthBarBg;
         });
 
         local HealthText = Library:CreateLabel({
             BackgroundTransparency = 1;
-            Position = UDim2.new(0.5, -70, 0.5, -8);
-            Size = UDim2.new(0, 28, 0, 14);
+            Size = UDim2.new(0, 30, 0, 12);
+            Position = UDim2.new(0.29, -34, 0.14, 0);
             Text = '100';
             TextSize = 10;
+            TextColor3 = Color3.fromRGB(80, 255, 80);
+            TextXAlignment = Enum.TextXAlignment.Right;
             Visible = false;
-            ZIndex = 8;
+            ZIndex = 7;
             Parent = Overlay;
         });
 
-        local SkelLines = {};
-        local function skel()
-            local f = Library:Create('Frame', {
-                BackgroundColor3 = Library.AccentColor;
+        -- Skeleton stick figure
+        local SkelFrame = Library:Create('Frame', {
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0.42, 0, 0.72, 0);
+            Position = UDim2.new(0.29, 0, 0.14, 0);
+            Visible = false;
+            ZIndex = 52;
+            Parent = Overlay;
+        });
+        local function skLine(x0, y0, x1, y1, thick)
+            local dx, dy = x1 - x0, y1 - y0;
+            local len = math.sqrt(dx * dx + dy * dy);
+            local midX, midY = (x0 + x1) / 2, (y0 + y1) / 2;
+            local angle = math.deg(math.atan2(dy, dx));
+            return Library:Create('Frame', {
+                BackgroundColor3 = Color3.fromRGB(255, 255, 255);
                 BorderSizePixel = 0;
                 AnchorPoint = Vector2.new(0.5, 0.5);
-                Size = UDim2.new(0, 2, 0, 20);
-                Visible = false;
-                ZIndex = 7;
-                Parent = Overlay;
+                Position = UDim2.new(midX, 0, midY, 0);
+                Size = UDim2.new(len, 0, 0, thick or 2);
+                Rotation = angle;
+                ZIndex = 52;
+                Parent = SkelFrame;
             });
-            Library:AddToRegistry(f, { BackgroundColor3 = 'AccentColor' });
-            SkelLines[#SkelLines + 1] = f;
-            return f;
         end;
-        local s1 = skel(); local s2 = skel(); local s3 = skel(); local s4 = skel(); local s5 = skel();
-
-        local ChamsHighlight = Instance.new('Highlight');
-        ChamsHighlight.FillColor = Library.AccentColor;
-        ChamsHighlight.OutlineColor = Color3.new(1, 1, 1);
-        ChamsHighlight.FillTransparency = 0.55;
-        ChamsHighlight.OutlineTransparency = 0.2;
-        ChamsHighlight.Enabled = false;
-        ChamsHighlight.Parent = Dummy;
-
-        local function applyOverlay()
-            local st = Preview.State;
-            local on = st.Enabled == true;
-
-            BoxFrame.Visible = on and (st.Box == true or st.Corner == true);
-            BoxStroke.Enabled = on and st.Box == true and not st.Corner;
-            for _, c in ipairs(corners) do
-                c.Visible = on and (st.Corner == true);
-            end;
-
-            NameLabel.Visible = on and st.Names == true;
-            DistLabel.Visible = on and st.Distance == true;
-            HealthBarBG.Visible = on and st.Health == true;
-            HealthText.Visible = on and st.HealthText == true;
-
-            for _, l in ipairs(SkelLines) do
-                l.Visible = on and st.Skeleton == true;
-            end;
-            if on and st.Skeleton then
-                s1.Position = UDim2.new(0.5, 0, 0.28, 0); s1.Size = UDim2.new(0, 2, 0, 28);
-                s2.Position = UDim2.new(0.5, 0, 0.22, 0); s2.Size = UDim2.new(0, 40, 0, 2);
-                s3.Position = UDim2.new(0.35, 0, 0.38, 0); s3.Size = UDim2.new(0, 2, 0, 30);
-                s4.Position = UDim2.new(0.65, 0, 0.38, 0); s4.Size = UDim2.new(0, 2, 0, 30);
-                s5.Position = UDim2.new(0.5, 0, 0.62, 0); s5.Size = UDim2.new(0, 2, 0, 36);
-            end;
-
-            ChamsHighlight.Enabled = on and st.Chams == true;
-            if st.Rainbow then
-                local c = Library.CurrentRainbowColor or Library.AccentColor;
-                ChamsHighlight.FillColor = c;
-                BoxStroke.Color = c;
-            else
-                ChamsHighlight.FillColor = Library.AccentColor;
-                BoxStroke.Color = Library.AccentColor;
-            end;
-
-            for _, p in ipairs(Dummy:GetChildren()) do
-                if p:IsA('BasePart') and p.Name ~= 'HumanoidRootPart' then
-                    if p.Name == 'Head' then
-                        p.Color = on and Color3.fromRGB(210, 180, 150) or Color3.fromRGB(90, 80, 70);
-                    else
-                        p.Color = on and Color3.fromRGB(180, 180, 190) or Color3.fromRGB(70, 70, 78);
-                    end;
-                end;
-            end;
+        local joints = {
+            {0.5, 0.08, 0.5, 0.18};
+            {0.5, 0.18, 0.5, 0.28};
+            {0.5, 0.28, 0.5, 0.55};
+            {0.5, 0.30, 0.22, 0.32};
+            {0.22, 0.32, 0.12, 0.48};
+            {0.5, 0.30, 0.78, 0.32};
+            {0.78, 0.32, 0.88, 0.48};
+            {0.5, 0.55, 0.38, 0.58};
+            {0.38, 0.58, 0.34, 0.88};
+            {0.5, 0.55, 0.62, 0.58};
+            {0.62, 0.58, 0.66, 0.88};
+        };
+        for _, L in ipairs(joints) do
+            skLine(L[1], L[2], L[3], L[4], 2);
         end;
 
-        function Preview:SetESP(payload)
-            if typeof(payload) ~= 'table' then return end;
-            for k, v in pairs(payload) do
-                if Preview.State[k] ~= nil then
-                    Preview.State[k] = v and true or false;
-                end;
+        local WeaponLabel = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(1, 0, 0, 14);
+            Position = UDim2.new(0, 0, 1, -34);
+            Text = 'AK-47';
+            TextSize = 11;
+            TextColor3 = Color3.fromRGB(0, 200, 200);
+            TextXAlignment = Enum.TextXAlignment.Center;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        local FlagLabel = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0, 24, 0, 40);
+            Position = UDim2.new(0.71, 4, 0.14, 0);
+            Text = 'F\nW';
+            TextSize = 10;
+            TextXAlignment = Enum.TextXAlignment.Left;
+            TextYAlignment = Enum.TextYAlignment.Top;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        local TeamBadge = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0, 40, 0, 14);
+            Position = UDim2.new(0, 6, 0, 4);
+            Text = 'TEAM';
+            TextSize = 10;
+            TextColor3 = Color3.fromRGB(80, 255, 120);
+            TextXAlignment = Enum.TextXAlignment.Left;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        local function applyColor(col)
+            BoxStroke.Color = col;
+            for _, c in ipairs(Corners:GetChildren()) do
+                if c:IsA('Frame') then c.BackgroundColor3 = col end;
             end;
-            if payload.CornerBox ~= nil then Preview.State.Corner = payload.CornerBox and true or false end;
-            if payload.Healthbar ~= nil then Preview.State.Health = payload.Healthbar and true or false end;
-            applyOverlay();
+            for _, c in ipairs(SkelFrame:GetChildren()) do
+                if c:IsA('Frame') then c.BackgroundColor3 = col end;
+            end;
+            NameLabel.TextColor3 = col;
         end;
 
         function Preview:RefreshESPOverlay()
-            applyOverlay();
+            local E = Preview.ESP or {};
+            local show = E.Enabled == true;
+
+            BoxFrame.Visible = show and E.Box == true;
+            Corners.Visible = show and E.Corner == true;
+            NameLabel.Visible = show and E.Names == true;
+            DistLabel.Visible = show and E.Distance == true;
+            HealthBarBg.Visible = show and E.Health == true;
+            HealthText.Visible = show and E.HealthText == true;
+            SkelFrame.Visible = show and E.Skeleton == true;
+            WeaponLabel.Visible = show and E.Weapons == true;
+            FlagLabel.Visible = show and E.Flags == true;
+            TeamBadge.Visible = show and E.TeamCheck == true;
+
+            if show and E.Weapons and E.Distance then
+                DistLabel.Position = UDim2.new(0, 0, 1, -18);
+                WeaponLabel.Position = UDim2.new(0, 0, 1, -34);
+            elseif show and E.Weapons then
+                WeaponLabel.Position = UDim2.new(0, 0, 1, -18);
+            elseif show and E.Distance then
+                DistLabel.Position = UDim2.new(0, 0, 1, -18);
+            end;
+
+            -- Chams: ViewportFrame ignores Highlight — tint BaseParts
+            local model = Preview._Viewmodel;
+            Preview._ChamsCache = Preview._ChamsCache or {};
+            if model then
+                if show and E.Chams then
+                    local fill = E.Rainbow and Color3.fromHSV((tick() * 0.5) % 1, 1, 1) or (Library.AccentColor or Color3.fromRGB(0, 116, 224));
+                    for _, part in ipairs(model:GetDescendants()) do
+                        if part:IsA('BasePart') then
+                            if not Preview._ChamsCache[part] then
+                                Preview._ChamsCache[part] = {
+                                    Color = part.Color;
+                                    Material = part.Material;
+                                    Transparency = part.Transparency;
+                                };
+                            end;
+                            part.Color = fill;
+                            part.Material = Enum.Material.ForceField;
+                            part.Transparency = 0.35;
+                        end;
+                    end;
+                else
+                    for part, props in pairs(Preview._ChamsCache) do
+                        if part and part.Parent then
+                            part.Color = props.Color;
+                            part.Material = props.Material;
+                            part.Transparency = props.Transparency;
+                        end;
+                    end;
+                    Preview._ChamsCache = {};
+                end;
+            end;
+
+            local col = Color3.fromRGB(255, 255, 255);
+            if show and E.Rainbow then
+                col = Color3.fromHSV((tick() * 0.5) % 1, 1, 1);
+            end;
+            applyColor(col);
+            if show and E.Rainbow then
+                DistLabel.TextColor3 = col;
+                WeaponLabel.TextColor3 = col;
+                FlagLabel.TextColor3 = col;
+            else
+                DistLabel.TextColor3 = Color3.fromRGB(200, 200, 200);
+                WeaponLabel.TextColor3 = Color3.fromRGB(0, 200, 200);
+                FlagLabel.TextColor3 = Color3.fromRGB(255, 255, 255);
+            end;
+        end;
+
+        function Preview:SetESP(Key, Value)
+            Preview.ESP = Preview.ESP or {
+                Enabled = false; Box = false; Corner = false; Names = false;
+                Health = false; HealthText = false; Distance = false;
+                Chams = false; Skeleton = false; Rainbow = false;
+                Weapons = false; Flags = false; TeamCheck = false;
+            };
+
+            local payload = Key;
+            if type(Key) == 'string' then
+                payload = { [Key] = Value };
+            end;
+            if type(payload) ~= 'table' then return end;
+
+            local aliases = {
+                Boxes = 'Box'; Bounding = 'Box'; Full = 'Box';
+                BoxCorner = 'Corner'; Corners = 'Corner'; CornerBox = 'Corner';
+                Name = 'Names'; PlayerNames = 'Names';
+                Healthbar = 'Health'; HealthBar = 'Health';
+                Dist = 'Distance'; Distances = 'Distance';
+                Cham = 'Chams'; Highlight = 'Chams';
+                Skel = 'Skeleton'; Bones = 'Skeleton';
+                Master = 'Enabled'; Enable = 'Enabled';
+                Weapon = 'Weapons'; WeaponText = 'Weapons';
+                Flag = 'Flags'; Inventory = 'Flags';
+                Team = 'TeamCheck'; Teams = 'TeamCheck';
+            };
+
+            for k, v in pairs(payload) do
+                local key = aliases[k] or k;
+                if Preview.ESP[key] ~= nil then
+                    Preview.ESP[key] = not not v;
+                end;
+            end;
+
+            Preview:RefreshESPOverlay();
+        end;
+
+        function Preview:Update(payload)
+            return Preview:SetESP(payload);
         end;
 
         function Preview:SetEnabled(v)
-            Preview.State.Enabled = v and true or false;
-            applyOverlay();
+            Preview.ESP.Enabled = v and true or false;
+            Preview:RefreshESPOverlay();
         end;
 
-        Library:GiveSignal(RunService.RenderStepped:Connect(function(dt)
-            if not Holder.Parent then return end;
-            pcall(function()
-                Dummy:PivotTo(Dummy:GetPivot() * CFrame.Angles(0, dt * 0.45, 0));
-            end);
-            if Preview.State.Rainbow and Preview.State.Enabled then
-                local c = Library.CurrentRainbowColor;
-                if c then
-                    ChamsHighlight.FillColor = c;
-                    BoxStroke.Color = c;
+        -- Viewport camera + character clone (1up style)
+        local ViewportCamera = Instance.new('Camera');
+        Viewport.CurrentCamera = ViewportCamera;
+        ViewportCamera.CameraType = Enum.CameraType.Scriptable;
+
+        local PreviewModel = nil;
+        local RenderObjects = {};
+        local Connections = {};
+        local OFFSET = CFrame.new(0, 2.5, -8.5);
+
+        local ValidClasses = {
+            MeshPart = true; Part = true; Accoutrement = true;
+            Pants = true; Shirt = true; Humanoid = true;
+        };
+
+        local function ClearViewport()
+            RenderObjects = {};
+            for _, Obj in ipairs(Viewport:GetChildren()) do
+                if not Obj:IsA('Camera') then
+                    Obj:Destroy();
                 end;
+            end;
+        end;
+
+        function Preview:AddObject(Object)
+            if not Object or not ValidClasses[Object.ClassName] then return end;
+            local was = Object.Archivable;
+            Object.Archivable = true;
+            local Clone = Object:Clone();
+            Object.Archivable = was;
+
+            if Object:IsA('BasePart') then
+                RenderObjects[Object] = Clone;
+            elseif Object:IsA('Accoutrement') then
+                if Object:FindFirstChild('Handle') and Clone:FindFirstChild('Handle') then
+                    RenderObjects[Object.Handle] = Clone.Handle;
+                end;
+            elseif Object:IsA('Humanoid') then
+                for _, st in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
+                    pcall(function() Clone:SetStateEnabled(st, false) end);
+                end;
+                Clone.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None;
+            end;
+            return Clone;
+        end;
+
+        function Preview:RemoveObject(Object)
+            local Clone = RenderObjects[Object];
+            if not Clone then return end;
+            RenderObjects[Object] = nil;
+            pcall(function() Clone:Destroy() end);
+        end;
+
+        function Preview:BuildFromModel(Model)
+            ClearViewport();
+            for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end;
+            Connections = {};
+
+            PreviewModel = Model;
+            if not Model then return end;
+
+            local Viewmodel = Instance.new('Model');
+            Viewmodel.Name = 'Viewmodel';
+            Viewmodel.Parent = Viewport;
+            Preview._Viewmodel = Viewmodel;
+
+            for _, Object in ipairs(Model:GetDescendants()) do
+                local Clone = self:AddObject(Object);
+                if Clone then Clone.Parent = Viewmodel end;
+            end;
+
+            table.insert(Connections, Model.DescendantAdded:Connect(function(Object)
+                local Clone = self:AddObject(Object);
+                if Clone then Clone.Parent = Viewmodel end;
+            end));
+            table.insert(Connections, Model.DescendantRemoving:Connect(function(Object)
+                self:RemoveObject(Object);
+            end));
+
+            task.defer(function()
+                pcall(function() Preview:RefreshESPOverlay() end);
+            end);
+        end;
+
+        Library:GiveSignal(RunService.Heartbeat:Connect(function()
+            if not PreviewModel or not Holder.Parent or not Holder.Visible then return end;
+            local Root = PreviewModel:FindFirstChild('HumanoidRootPart');
+            if not Root then return end;
+            ViewportCamera.CFrame = CFrame.new(Root.CFrame:ToWorldSpace(OFFSET).Position, Root.Position);
+            for Original, Clone in pairs(RenderObjects) do
+                if Original and Original.Parent then
+                    pcall(function() Clone.CFrame = Original.CFrame end);
+                else
+                    Preview:RemoveObject(Original);
+                end;
+            end;
+            -- live rainbow while enabled
+            if Preview.ESP and Preview.ESP.Enabled and Preview.ESP.Rainbow then
+                Preview:RefreshESPOverlay();
             end;
         end));
 
-        applyOverlay();
+        task.spawn(function()
+            local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait();
+            Preview:BuildFromModel(Character);
+        end);
+        Library:GiveSignal(LocalPlayer.CharacterAdded:Connect(function(char)
+            task.wait(0.3);
+            Preview:BuildFromModel(char);
+        end));
+
+        Preview:RefreshESPOverlay();
         Groupbox:AddBlank(6);
         Groupbox:Resize();
 
@@ -5453,10 +5662,16 @@ function Library:CreateWindow(...)
     if typeof(Config.Size) ~= 'UDim2' then
         if Library.IsMobile then
             local ViewportSizeYOffset = tonumber(workspace.CurrentCamera.ViewportSize.Y) - 35;
-            Config.Size = UDim2.fromOffset(600, math.clamp(ViewportSizeYOffset, 200, 600)) -- Extended width from 550 to 600
+            -- Slightly bigger default on mobile / iPad
+            Config.Size = UDim2.fromOffset(640, math.clamp(ViewportSizeYOffset, 280, 680))
         else
-            Config.Size = UDim2.fromOffset(650, 550) -- Extended width from 600 to 650
+            Config.Size = UDim2.fromOffset(650, 550)
         end
+    end
+
+    -- PC: resizable by default (Linoria-style corner handle). Mobile: off.
+    if typeof(Config.Resizable) ~= 'boolean' then
+        Config.Resizable = not Library.IsMobile;
     end
 
     if Config.TabPadding <= 0 then
@@ -6122,7 +6337,7 @@ function Library:CreateWindow(...)
             return Tab:AddGroupbox({ Side = 2; Name = Name; });
         end;
 
-        -- ========================= GLOBAL CHAT (1up feature) =========================
+        -- ========================= GLOBAL CHAT (1up feature — full) =========================
         -- Usage: local Chat = Tab:GlobalChat(1) -- side 1 left, 2 right
         function Tab:GlobalChat(Side)
             Side = (Side == 2) and 2 or 1;
@@ -6131,13 +6346,18 @@ function Library:CreateWindow(...)
                 _onSend = nil;
                 _statusText = 'Online';
                 _statusColor = Color3.fromRGB(62, 255, 91);
+                _messages = {};
+                _maxMessages = 80;
+                _showTimestamps = false;
             };
+
+            local chatH = Library.IsMobile and 360 or 320;
 
             local BoxOuter = Library:Create('Frame', {
                 BackgroundColor3 = Library.BackgroundColor;
                 BorderColor3 = Library.OutlineColor;
                 BorderMode = Enum.BorderMode.Inset;
-                Size = UDim2.new(1, 0, 0, 320);
+                Size = UDim2.new(1, 0, 0, chatH);
                 ZIndex = 2;
                 Parent = Side == 1 and LeftSide or RightSide;
             });
@@ -6187,8 +6407,8 @@ function Library:CreateWindow(...)
                 Parent = BoxInner;
             });
 
-            Library:CreateLabel({
-                Size = UDim2.new(0.55, 0, 1, 0);
+            local TitleLabel = Library:CreateLabel({
+                Size = UDim2.new(0.5, 0, 1, 0);
                 Text = 'Global Chat';
                 TextSize = 14;
                 TextXAlignment = Enum.TextXAlignment.Left;
@@ -6199,7 +6419,7 @@ function Library:CreateWindow(...)
             local StatusDot = Library:Create('Frame', {
                 BackgroundColor3 = ChatAPI._statusColor;
                 BorderSizePixel = 0;
-                Position = UDim2.new(1, -70, 0.5, -4);
+                Position = UDim2.new(1, -78, 0.5, -4);
                 Size = UDim2.new(0, 8, 0, 8);
                 ZIndex = 6;
                 Parent = Header;
@@ -6210,8 +6430,8 @@ function Library:CreateWindow(...)
             });
 
             local StatusLabel = Library:CreateLabel({
-                Position = UDim2.new(1, -58, 0, 0);
-                Size = UDim2.new(0, 58, 1, 0);
+                Position = UDim2.new(1, -66, 0, 0);
+                Size = UDim2.new(0, 66, 1, 0);
                 Text = ChatAPI._statusText;
                 TextSize = 12;
                 TextXAlignment = Enum.TextXAlignment.Left;
@@ -6244,7 +6464,7 @@ function Library:CreateWindow(...)
                 ScrollBarImageColor3 = 'AccentColor';
             });
 
-            local List = Library:Create('UIListLayout', {
+            Library:Create('UIListLayout', {
                 Padding = UDim.new(0, 6);
                 FillDirection = Enum.FillDirection.Vertical;
                 SortOrder = Enum.SortOrder.LayoutOrder;
@@ -6329,6 +6549,28 @@ function Library:CreateWindow(...)
                 end);
             end;
 
+            local function resolveAvatar(Avatar)
+                if typeof(Avatar) == 'number' then
+                    return 'rbxassetid://' .. tostring(Avatar);
+                end;
+                if typeof(Avatar) == 'string' and Avatar ~= '' then
+                    if Avatar:match('^%d+$') then
+                        return 'rbxassetid://' .. Avatar;
+                    end;
+                    return Avatar;
+                end;
+                return 'rbxassetid://0';
+            end;
+
+            local function pruneMessages()
+                while #ChatAPI._messages > ChatAPI._maxMessages do
+                    local old = table.remove(ChatAPI._messages, 1);
+                    if old and old.Destroy then
+                        pcall(function() old:Destroy() end);
+                    end;
+                end;
+            end;
+
             function ChatAPI:SendMessage(Avatar, Username, Message, IsLocal)
                 Username = tostring(Username or 'Unknown');
                 Message = tostring(Message or '');
@@ -6345,7 +6587,7 @@ function Library:CreateWindow(...)
                     BackgroundColor3 = Color3.fromRGB(40, 40, 48);
                     BorderSizePixel = 0;
                     Size = UDim2.new(0, 28, 0, 28);
-                    Image = (typeof(Avatar) == 'string' and Avatar ~= '' and Avatar) or 'rbxassetid://0';
+                    Image = resolveAvatar(Avatar);
                     ZIndex = 7;
                     Parent = Row;
                 });
@@ -6354,10 +6596,16 @@ function Library:CreateWindow(...)
                     Parent = AvatarImg;
                 });
 
+                local nameText = Username;
+                if ChatAPI._showTimestamps then
+                    local t = os.date('*t');
+                    nameText = string.format('[%02d:%02d] %s', t.hour, t.min, Username);
+                end;
+
                 local NameL = Library:CreateLabel({
                     Position = UDim2.new(0, 34, 0, 0);
                     Size = UDim2.new(1, -34, 0, 14);
-                    Text = Username;
+                    Text = nameText;
                     TextSize = 12;
                     TextXAlignment = Enum.TextXAlignment.Left;
                     TextColor3 = IsLocal and Library.AccentColor or Library.FontColor;
@@ -6384,6 +6632,8 @@ function Library:CreateWindow(...)
                 MsgL.Size = UDim2.new(1, -34, 0, math.max(16, bounds + 2));
                 Row.Size = UDim2.new(1, -4, 0, math.max(32, 16 + MsgL.Size.Y.Offset));
 
+                table.insert(ChatAPI._messages, Row);
+                pruneMessages();
                 scrollToBottom();
                 return Row;
             end;
@@ -6394,6 +6644,34 @@ function Library:CreateWindow(...)
 
             function ChatAPI:ClearText()
                 InputBox.Text = '';
+            end;
+
+            function ChatAPI:ClearMessages()
+                for _, row in ipairs(ChatAPI._messages) do
+                    pcall(function() row:Destroy() end);
+                end;
+                table.clear(ChatAPI._messages);
+            end;
+
+            function ChatAPI:GetMessageCount()
+                return #ChatAPI._messages;
+            end;
+
+            function ChatAPI:SetMaxMessages(n)
+                ChatAPI._maxMessages = math.max(10, tonumber(n) or 80);
+                pruneMessages();
+            end;
+
+            function ChatAPI:SetTimestamps(enabled)
+                ChatAPI._showTimestamps = enabled and true or false;
+            end;
+
+            function ChatAPI:SetTitle(text)
+                TitleLabel.Text = tostring(text or 'Global Chat');
+            end;
+
+            function ChatAPI:SetPlaceholder(text)
+                InputBox.PlaceholderText = tostring(text or 'Type a message...');
             end;
 
             function ChatAPI:SetStatus(Text, Color)
@@ -6417,7 +6695,7 @@ function Library:CreateWindow(...)
                 if ChatAPI._onSend then
                     Library:SafeCallback(ChatAPI._onSend, text);
                 end;
-                InputBox.Text = '';
+                -- do not auto-clear here; scripts can ClearText() after send
             end;
 
             SendBtn.MouseButton1Click:Connect(fireSend);
