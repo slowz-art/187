@@ -128,7 +128,7 @@ local Library = {
     ShowCustomCursor = false; -- default off (no blue triangle cursor)
     ShowToggleFrameInKeybinds = true;
     ShowKeybindHints = false; -- OPT-IN: Library.ShowKeybindHints = true
-    FavoritesEnabled = false; -- OPT-IN: Library:EnableFavoritesSystem() or FavoritesEnabled = true BEFORE toggles
+    FavoritesEnabled = false; -- OPT-IN: Library:EnableFavoritesSystem()
     Favorites = {};
     FavoritesPanelOpen = true;
     NotifyOnError = false; -- true = Library:Notify for SafeCallback (still warns in the developer console)
@@ -145,7 +145,7 @@ local Library = {
 
 pcall(function() Library.DevicePlatform = InputService:GetPlatform(); end); -- For safety so the UI library doesn't error.
 Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS);
--- Mobile: slightly larger window min; PC: standard Linoria min for resize handle
+-- Mobile: slightly larger window min; PC: standard Linoria min
 Library.MinSize = if Library.IsMobile then Vector2.new(580, 280) else Vector2.new(550, 300);
 
 local RainbowStep = 0
@@ -3529,7 +3529,6 @@ do
                 return;
             end;
 
-            local Was = Toggle.Value;
             Bool = (not not Bool);
 
             Toggle.Value = Bool;
@@ -3547,49 +3546,8 @@ do
                 Library:SafeCallback(Toggle.Changed, Toggle.Value);
             end;
 
-            -- PC keybind shower: when enabling a feature that has a keybind
-            if Bool and not Was and Library.ShowKeybindHints and not Library.IsMobile then
-                for _, Addon in next, Toggle.Addons do
-                    if Addon.Type == 'KeyPicker' then
-                        pcall(function()
-                            Library:ShowKeybindHint(Toggle.Text or Toggle.OriginalText or 'Feature', Addon.Value, Addon.Mode)
-                        end)
-                    end
-                end
-            end
-
             Library:UpdateDependencyBoxes();
-            if Library.FavoritesEnabled then
-                pcall(function() if Library.RefreshFavoritesPanel then Library:RefreshFavoritesPanel() end end);
-            end
         end;
-
-        function Toggle:SetFavorite(on)
-            if not Library.FavoritesEnabled then return end
-            local idx = nil
-            for k, v in pairs(Toggles) do
-                if v == Toggle then idx = k; break end
-            end
-            if not idx then return end
-            Library.Favorites = Library.Favorites or {}
-            if on then
-                Library.Favorites[idx] = true
-                Library.FavoritesPanelOpen = true
-            else
-                Library.Favorites[idx] = nil
-            end
-            pcall(function()
-                if Library.RefreshFavoritesPanel then Library:RefreshFavoritesPanel() end
-            end)
-        end
-
-        function Toggle:IsFavorite()
-            local idx = nil
-            for k, v in pairs(Toggles) do
-                if v == Toggle then idx = k; break end
-            end
-            return idx and Library.Favorites and Library.Favorites[idx] == true
-        end
 
         function Toggle:SetVisible(Visibility)
             Toggle.Visible = Visibility;
@@ -3648,13 +3606,6 @@ do
         setmetatable(Toggle, BaseAddons);
 
         Toggles[Idx] = Toggle;
-
-        -- Favorite star only if script opted in (Library.FavoritesEnabled / EnableFavoritesSystem)
-        if Library.FavoritesEnabled then
-            pcall(function()
-                Library:_AttachFavoriteStar(Toggle, Idx, ToggleLabel)
-            end)
-        end
 
         Library:UpdateDependencyBoxes();
 
@@ -4779,520 +4730,6 @@ do
         return Depbox;
     end;
 
-    -- ========================= ESP PREVIEW (1up-style) =========================
-    function BaseGroupboxFuncs:AddESPPreview(Name)
-        local Groupbox = self;
-        local Container = Groupbox.Container;
-        Name = typeof(Name) == "string" and Name or "ESP Preview";
-
-        local Preview = {
-            ESP = {
-                Enabled = false;
-                Box = false;
-                Corner = false;
-                Names = false;
-                Health = false;
-                HealthText = false;
-                Distance = false;
-                Chams = false;
-                Skeleton = false;
-                Rainbow = false;
-                Weapons = false;
-                Flags = false;
-                TeamCheck = false;
-            };
-            _ChamsCache = {};
-        };
-
-        local Holder = Library:Create('Frame', {
-            BackgroundColor3 = Library.MainColor;
-            BorderColor3 = Library.OutlineColor;
-            BorderMode = Enum.BorderMode.Inset;
-            Size = UDim2.new(1, -4, 0, 220);
-            ZIndex = 4;
-            Parent = Container;
-        });
-
-        Library:Create('UICorner', {
-            CornerRadius = UDim.new(0, 6);
-            Parent = Holder;
-        });
-
-        Library:AddToRegistry(Holder, {
-            BackgroundColor3 = 'MainColor';
-            BorderColor3 = 'OutlineColor';
-        });
-
-        Library:CreateLabel({
-            BackgroundTransparency = 1;
-            Position = UDim2.new(0, 8, 0, 4);
-            Size = UDim2.new(1, -16, 0, 16);
-            Text = Name;
-            TextSize = 13;
-            TextXAlignment = Enum.TextXAlignment.Left;
-            TextTransparency = 0.25;
-            ZIndex = 5;
-            Parent = Holder;
-        });
-
-        local Bg = Library:Create('Frame', {
-            BackgroundColor3 = Color3.fromRGB(18, 18, 22);
-            BorderSizePixel = 0;
-            Position = UDim2.new(0, 6, 0, 24);
-            Size = UDim2.new(1, -12, 1, -30);
-            ZIndex = 5;
-            Parent = Holder;
-        });
-        Library:Create('UICorner', {
-            CornerRadius = UDim.new(0, 5);
-            Parent = Bg;
-        });
-
-        local Viewport = Library:Create('ViewportFrame', {
-            BackgroundTransparency = 1;
-            Size = UDim2.fromScale(1, 1);
-            ZIndex = 5;
-            BorderSizePixel = 0;
-            Parent = Bg;
-        });
-
-        local Overlay = Library:Create('Frame', {
-            BackgroundTransparency = 1;
-            Size = UDim2.fromScale(1, 1);
-            ZIndex = 50;
-            BorderSizePixel = 0;
-            Parent = Bg;
-        });
-
-        -- Full box
-        local BoxFrame = Library:Create('Frame', {
-            BackgroundTransparency = 1;
-            BorderSizePixel = 0;
-            Size = UDim2.new(0.42, 0, 0.72, 0);
-            Position = UDim2.new(0.29, 0, 0.14, 0);
-            Visible = false;
-            ZIndex = 6;
-            Parent = Overlay;
-        });
-        local BoxStroke = Library:Create('UIStroke', {
-            Color = Color3.fromRGB(255, 255, 255);
-            Thickness = 2;
-            ApplyStrokeMode = Enum.ApplyStrokeMode.Border;
-            Parent = BoxFrame;
-        });
-
-        -- Corner box
-        local Corners = Library:Create('Frame', {
-            BackgroundTransparency = 1;
-            Size = UDim2.new(0.42, 0, 0.72, 0);
-            Position = UDim2.new(0.29, 0, 0.14, 0);
-            Visible = false;
-            ZIndex = 6;
-            Parent = Overlay;
-        });
-        local cornersSpec = {
-            {0, 0, 0.3, 0.015, 0, 0}; {0, 0, 0.015, 0.22, 0, 0};
-            {1, 0, 0.3, 0.015, 1, 0}; {1, 0, 0.015, 0.22, 1, 0};
-            {0, 1, 0.3, 0.015, 0, 1}; {0, 1, 0.015, 0.22, 0, 1};
-            {1, 1, 0.3, 0.015, 1, 1}; {1, 1, 0.015, 0.22, 1, 1};
-        };
-        for _, s in ipairs(cornersSpec) do
-            Library:Create('Frame', {
-                BackgroundColor3 = Color3.fromRGB(255, 255, 255);
-                BorderSizePixel = 0;
-                Position = UDim2.new(s[1], 0, s[2], 0);
-                Size = UDim2.new(s[3], 0, s[4], 0);
-                AnchorPoint = Vector2.new(s[5], s[6]);
-                ZIndex = 6;
-                Parent = Corners;
-            });
-        end;
-
-        local NameLabel = Library:CreateLabel({
-            BackgroundTransparency = 1;
-            Size = UDim2.new(1, 0, 0, 16);
-            Position = UDim2.new(0, 0, 0, 4);
-            Text = (LocalPlayer and LocalPlayer.Name) or 'Player';
-            TextSize = 12;
-            TextXAlignment = Enum.TextXAlignment.Center;
-            Visible = false;
-            ZIndex = 7;
-            Parent = Overlay;
-        });
-
-        local DistLabel = Library:CreateLabel({
-            BackgroundTransparency = 1;
-            Size = UDim2.new(1, 0, 0, 14);
-            Position = UDim2.new(0, 0, 1, -18);
-            Text = '12m';
-            TextSize = 11;
-            TextColor3 = Color3.fromRGB(200, 200, 200);
-            TextXAlignment = Enum.TextXAlignment.Center;
-            Visible = false;
-            ZIndex = 7;
-            Parent = Overlay;
-        });
-
-        local HealthBarBg = Library:Create('Frame', {
-            BackgroundColor3 = Color3.fromRGB(20, 20, 20);
-            BorderSizePixel = 0;
-            Size = UDim2.new(0, 4, 0.72, 0);
-            Position = UDim2.new(0.29, -8, 0.14, 0);
-            Visible = false;
-            ZIndex = 6;
-            Parent = Overlay;
-        });
-        Library:Create('Frame', {
-            BackgroundColor3 = Color3.fromRGB(80, 255, 80);
-            BorderSizePixel = 0;
-            Size = UDim2.new(1, 0, 0.75, 0);
-            Position = UDim2.new(0, 0, 0.25, 0);
-            ZIndex = 7;
-            Parent = HealthBarBg;
-        });
-
-        local HealthText = Library:CreateLabel({
-            BackgroundTransparency = 1;
-            Size = UDim2.new(0, 30, 0, 12);
-            Position = UDim2.new(0.29, -34, 0.14, 0);
-            Text = '100';
-            TextSize = 10;
-            TextColor3 = Color3.fromRGB(80, 255, 80);
-            TextXAlignment = Enum.TextXAlignment.Right;
-            Visible = false;
-            ZIndex = 7;
-            Parent = Overlay;
-        });
-
-        -- Skeleton stick figure
-        local SkelFrame = Library:Create('Frame', {
-            BackgroundTransparency = 1;
-            Size = UDim2.new(0.42, 0, 0.72, 0);
-            Position = UDim2.new(0.29, 0, 0.14, 0);
-            Visible = false;
-            ZIndex = 52;
-            Parent = Overlay;
-        });
-        local function skLine(x0, y0, x1, y1, thick)
-            local dx, dy = x1 - x0, y1 - y0;
-            local len = math.sqrt(dx * dx + dy * dy);
-            local midX, midY = (x0 + x1) / 2, (y0 + y1) / 2;
-            local angle = math.deg(math.atan2(dy, dx));
-            return Library:Create('Frame', {
-                BackgroundColor3 = Color3.fromRGB(255, 255, 255);
-                BorderSizePixel = 0;
-                AnchorPoint = Vector2.new(0.5, 0.5);
-                Position = UDim2.new(midX, 0, midY, 0);
-                Size = UDim2.new(len, 0, 0, thick or 2);
-                Rotation = angle;
-                ZIndex = 52;
-                Parent = SkelFrame;
-            });
-        end;
-        local joints = {
-            {0.5, 0.08, 0.5, 0.18};
-            {0.5, 0.18, 0.5, 0.28};
-            {0.5, 0.28, 0.5, 0.55};
-            {0.5, 0.30, 0.22, 0.32};
-            {0.22, 0.32, 0.12, 0.48};
-            {0.5, 0.30, 0.78, 0.32};
-            {0.78, 0.32, 0.88, 0.48};
-            {0.5, 0.55, 0.38, 0.58};
-            {0.38, 0.58, 0.34, 0.88};
-            {0.5, 0.55, 0.62, 0.58};
-            {0.62, 0.58, 0.66, 0.88};
-        };
-        for _, L in ipairs(joints) do
-            skLine(L[1], L[2], L[3], L[4], 2);
-        end;
-
-        local WeaponLabel = Library:CreateLabel({
-            BackgroundTransparency = 1;
-            Size = UDim2.new(1, 0, 0, 14);
-            Position = UDim2.new(0, 0, 1, -34);
-            Text = 'AK-47';
-            TextSize = 11;
-            TextColor3 = Color3.fromRGB(0, 200, 200);
-            TextXAlignment = Enum.TextXAlignment.Center;
-            Visible = false;
-            ZIndex = 7;
-            Parent = Overlay;
-        });
-
-        local FlagLabel = Library:CreateLabel({
-            BackgroundTransparency = 1;
-            Size = UDim2.new(0, 24, 0, 40);
-            Position = UDim2.new(0.71, 4, 0.14, 0);
-            Text = 'F\nW';
-            TextSize = 10;
-            TextXAlignment = Enum.TextXAlignment.Left;
-            TextYAlignment = Enum.TextYAlignment.Top;
-            Visible = false;
-            ZIndex = 7;
-            Parent = Overlay;
-        });
-
-        local TeamBadge = Library:CreateLabel({
-            BackgroundTransparency = 1;
-            Size = UDim2.new(0, 40, 0, 14);
-            Position = UDim2.new(0, 6, 0, 4);
-            Text = 'TEAM';
-            TextSize = 10;
-            TextColor3 = Color3.fromRGB(80, 255, 120);
-            TextXAlignment = Enum.TextXAlignment.Left;
-            Visible = false;
-            ZIndex = 7;
-            Parent = Overlay;
-        });
-
-        local function applyColor(col)
-            BoxStroke.Color = col;
-            for _, c in ipairs(Corners:GetChildren()) do
-                if c:IsA('Frame') then c.BackgroundColor3 = col end;
-            end;
-            for _, c in ipairs(SkelFrame:GetChildren()) do
-                if c:IsA('Frame') then c.BackgroundColor3 = col end;
-            end;
-            NameLabel.TextColor3 = col;
-        end;
-
-        function Preview:RefreshESPOverlay()
-            local E = Preview.ESP or {};
-            local show = E.Enabled == true;
-
-            BoxFrame.Visible = show and E.Box == true;
-            Corners.Visible = show and E.Corner == true;
-            NameLabel.Visible = show and E.Names == true;
-            DistLabel.Visible = show and E.Distance == true;
-            HealthBarBg.Visible = show and E.Health == true;
-            HealthText.Visible = show and E.HealthText == true;
-            SkelFrame.Visible = show and E.Skeleton == true;
-            WeaponLabel.Visible = show and E.Weapons == true;
-            FlagLabel.Visible = show and E.Flags == true;
-            TeamBadge.Visible = show and E.TeamCheck == true;
-
-            if show and E.Weapons and E.Distance then
-                DistLabel.Position = UDim2.new(0, 0, 1, -18);
-                WeaponLabel.Position = UDim2.new(0, 0, 1, -34);
-            elseif show and E.Weapons then
-                WeaponLabel.Position = UDim2.new(0, 0, 1, -18);
-            elseif show and E.Distance then
-                DistLabel.Position = UDim2.new(0, 0, 1, -18);
-            end;
-
-            -- Chams: ViewportFrame ignores Highlight — tint BaseParts
-            local model = Preview._Viewmodel;
-            Preview._ChamsCache = Preview._ChamsCache or {};
-            if model then
-                if show and E.Chams then
-                    local fill = E.Rainbow and Color3.fromHSV((tick() * 0.5) % 1, 1, 1) or (Library.AccentColor or Color3.fromRGB(0, 116, 224));
-                    for _, part in ipairs(model:GetDescendants()) do
-                        if part:IsA('BasePart') then
-                            if not Preview._ChamsCache[part] then
-                                Preview._ChamsCache[part] = {
-                                    Color = part.Color;
-                                    Material = part.Material;
-                                    Transparency = part.Transparency;
-                                };
-                            end;
-                            part.Color = fill;
-                            part.Material = Enum.Material.ForceField;
-                            part.Transparency = 0.35;
-                        end;
-                    end;
-                else
-                    for part, props in pairs(Preview._ChamsCache) do
-                        if part and part.Parent then
-                            part.Color = props.Color;
-                            part.Material = props.Material;
-                            part.Transparency = props.Transparency;
-                        end;
-                    end;
-                    Preview._ChamsCache = {};
-                end;
-            end;
-
-            local col = Color3.fromRGB(255, 255, 255);
-            if show and E.Rainbow then
-                col = Color3.fromHSV((tick() * 0.5) % 1, 1, 1);
-            end;
-            applyColor(col);
-            if show and E.Rainbow then
-                DistLabel.TextColor3 = col;
-                WeaponLabel.TextColor3 = col;
-                FlagLabel.TextColor3 = col;
-            else
-                DistLabel.TextColor3 = Color3.fromRGB(200, 200, 200);
-                WeaponLabel.TextColor3 = Color3.fromRGB(0, 200, 200);
-                FlagLabel.TextColor3 = Color3.fromRGB(255, 255, 255);
-            end;
-        end;
-
-        function Preview:SetESP(Key, Value)
-            Preview.ESP = Preview.ESP or {
-                Enabled = false; Box = false; Corner = false; Names = false;
-                Health = false; HealthText = false; Distance = false;
-                Chams = false; Skeleton = false; Rainbow = false;
-                Weapons = false; Flags = false; TeamCheck = false;
-            };
-
-            local payload = Key;
-            if type(Key) == 'string' then
-                payload = { [Key] = Value };
-            end;
-            if type(payload) ~= 'table' then return end;
-
-            local aliases = {
-                Boxes = 'Box'; Bounding = 'Box'; Full = 'Box';
-                BoxCorner = 'Corner'; Corners = 'Corner'; CornerBox = 'Corner';
-                Name = 'Names'; PlayerNames = 'Names';
-                Healthbar = 'Health'; HealthBar = 'Health';
-                Dist = 'Distance'; Distances = 'Distance';
-                Cham = 'Chams'; Highlight = 'Chams';
-                Skel = 'Skeleton'; Bones = 'Skeleton';
-                Master = 'Enabled'; Enable = 'Enabled';
-                Weapon = 'Weapons'; WeaponText = 'Weapons';
-                Flag = 'Flags'; Inventory = 'Flags';
-                Team = 'TeamCheck'; Teams = 'TeamCheck';
-            };
-
-            for k, v in pairs(payload) do
-                local key = aliases[k] or k;
-                if Preview.ESP[key] ~= nil then
-                    Preview.ESP[key] = not not v;
-                end;
-            end;
-
-            Preview:RefreshESPOverlay();
-        end;
-
-        function Preview:Update(payload)
-            return Preview:SetESP(payload);
-        end;
-
-        function Preview:SetEnabled(v)
-            Preview.ESP.Enabled = v and true or false;
-            Preview:RefreshESPOverlay();
-        end;
-
-        -- Viewport camera + character clone (1up style)
-        local ViewportCamera = Instance.new('Camera');
-        Viewport.CurrentCamera = ViewportCamera;
-        ViewportCamera.CameraType = Enum.CameraType.Scriptable;
-
-        local PreviewModel = nil;
-        local RenderObjects = {};
-        local Connections = {};
-        local OFFSET = CFrame.new(0, 2.5, -8.5);
-
-        local ValidClasses = {
-            MeshPart = true; Part = true; Accoutrement = true;
-            Pants = true; Shirt = true; Humanoid = true;
-        };
-
-        local function ClearViewport()
-            RenderObjects = {};
-            for _, Obj in ipairs(Viewport:GetChildren()) do
-                if not Obj:IsA('Camera') then
-                    Obj:Destroy();
-                end;
-            end;
-        end;
-
-        function Preview:AddObject(Object)
-            if not Object or not ValidClasses[Object.ClassName] then return end;
-            local was = Object.Archivable;
-            Object.Archivable = true;
-            local Clone = Object:Clone();
-            Object.Archivable = was;
-
-            if Object:IsA('BasePart') then
-                RenderObjects[Object] = Clone;
-            elseif Object:IsA('Accoutrement') then
-                if Object:FindFirstChild('Handle') and Clone:FindFirstChild('Handle') then
-                    RenderObjects[Object.Handle] = Clone.Handle;
-                end;
-            elseif Object:IsA('Humanoid') then
-                for _, st in ipairs(Enum.HumanoidStateType:GetEnumItems()) do
-                    pcall(function() Clone:SetStateEnabled(st, false) end);
-                end;
-                Clone.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None;
-            end;
-            return Clone;
-        end;
-
-        function Preview:RemoveObject(Object)
-            local Clone = RenderObjects[Object];
-            if not Clone then return end;
-            RenderObjects[Object] = nil;
-            pcall(function() Clone:Destroy() end);
-        end;
-
-        function Preview:BuildFromModel(Model)
-            ClearViewport();
-            for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end;
-            Connections = {};
-
-            PreviewModel = Model;
-            if not Model then return end;
-
-            local Viewmodel = Instance.new('Model');
-            Viewmodel.Name = 'Viewmodel';
-            Viewmodel.Parent = Viewport;
-            Preview._Viewmodel = Viewmodel;
-
-            for _, Object in ipairs(Model:GetDescendants()) do
-                local Clone = self:AddObject(Object);
-                if Clone then Clone.Parent = Viewmodel end;
-            end;
-
-            table.insert(Connections, Model.DescendantAdded:Connect(function(Object)
-                local Clone = self:AddObject(Object);
-                if Clone then Clone.Parent = Viewmodel end;
-            end));
-            table.insert(Connections, Model.DescendantRemoving:Connect(function(Object)
-                self:RemoveObject(Object);
-            end));
-
-            task.defer(function()
-                pcall(function() Preview:RefreshESPOverlay() end);
-            end);
-        end;
-
-        Library:GiveSignal(RunService.Heartbeat:Connect(function()
-            if not PreviewModel or not Holder.Parent or not Holder.Visible then return end;
-            local Root = PreviewModel:FindFirstChild('HumanoidRootPart');
-            if not Root then return end;
-            ViewportCamera.CFrame = CFrame.new(Root.CFrame:ToWorldSpace(OFFSET).Position, Root.Position);
-            for Original, Clone in pairs(RenderObjects) do
-                if Original and Original.Parent then
-                    pcall(function() Clone.CFrame = Original.CFrame end);
-                else
-                    Preview:RemoveObject(Original);
-                end;
-            end;
-            -- live rainbow while enabled
-            if Preview.ESP and Preview.ESP.Enabled and Preview.ESP.Rainbow then
-                Preview:RefreshESPOverlay();
-            end;
-        end));
-
-        task.spawn(function()
-            local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait();
-            Preview:BuildFromModel(Character);
-        end);
-        Library:GiveSignal(LocalPlayer.CharacterAdded:Connect(function(char)
-            task.wait(0.3);
-            Preview:BuildFromModel(char);
-        end));
-
-        Preview:RefreshESPOverlay();
-        Groupbox:AddBlank(6);
-        Groupbox:Resize();
-
-        return Preview;
-    end;
-
     BaseGroupbox.__index = BaseGroupboxFuncs;
     BaseGroupbox.__namecall = function(Table, Key, ...)
         return BaseGroupboxFuncs[Key](...);
@@ -5709,22 +5146,16 @@ function Library:CreateWindow(...)
     if typeof(Config.TabPadding) ~= 'number' then Config.TabPadding = 1 end
     if typeof(Config.MenuFadeTime) ~= 'number' then Config.MenuFadeTime = 0.2 end
     if typeof(Config.NotifySide) ~= "string" then Library.NotifySide = 'Left' else Library.NotifySide = Config.NotifySide end
-    if typeof(Config.ShowCustomCursor) ~= 'boolean' then Library.ShowCustomCursor = false else Library.ShowCustomCursor = Config.ShowCustomCursor end
+    if typeof(Config.ShowCustomCursor) ~= 'boolean' then Library.ShowCustomCursor = true else Library.ShowCustomCursor = Config.ShowCustomCursor end
 
     if typeof(Config.Position) ~= 'UDim2' then Config.Position = UDim2.fromOffset(175, 50) end
     if typeof(Config.Size) ~= 'UDim2' then
         if Library.IsMobile then
             local ViewportSizeYOffset = tonumber(workspace.CurrentCamera.ViewportSize.Y) - 35;
-            -- Slightly bigger default on mobile / iPad
-            Config.Size = UDim2.fromOffset(640, math.clamp(ViewportSizeYOffset, 280, 680))
+            Config.Size = UDim2.fromOffset(600, math.clamp(ViewportSizeYOffset, 200, 600)) -- Extended width from 550 to 600
         else
-            Config.Size = UDim2.fromOffset(650, 550)
+            Config.Size = UDim2.fromOffset(650, 550) -- Extended width from 600 to 650
         end
-    end
-
-    -- PC: resizable by default (Linoria-style corner handle). Mobile: off.
-    if typeof(Config.Resizable) ~= 'boolean' then
-        Config.Resizable = not Library.IsMobile;
     end
 
     if Config.TabPadding <= 0 then
@@ -5814,8 +5245,6 @@ function Library:CreateWindow(...)
         ZIndex = 1;
         Parent = Outer;
     });
-    Window.Outer = Outer;
-    Window.Inner = Inner;
 
     -- Add corner rounding to inner window
     Library:Create('UICorner', {
@@ -5828,75 +5257,15 @@ function Library:CreateWindow(...)
         BorderColor3 = 'AccentColor';
     });
 
-    -- Title area (supports cycling words like 1up)
-    local TitleContainer = Library:Create('Frame', {
-        BackgroundTransparency = 1;
-        BorderSizePixel = 0;
-        Position = UDim2.new(0, 10, 0, 4);
-        Size = UDim2.new(1, -120, 0, 22);
-        ClipsDescendants = true;
-        ZIndex = 2;
+    local WindowLabel = Library:CreateLabel({
+        Position = UDim2.new(0, 10, 0, 5);
+        Size = UDim2.new(0, 0, 0, 20);
+        Text = Config.Title or '';
+        TextXAlignment = Enum.TextXAlignment.Left;
+        RichText = true; -- Added to support color fonts
+        ZIndex = 1;
         Parent = Inner;
     });
-
-    local function MakeCycleLabel(Text, Pos)
-        return Library:CreateLabel({
-            BackgroundTransparency = 1;
-            Position = Pos or UDim2.new(0, 0, 0, 0);
-            Size = UDim2.new(1, 0, 1, 0);
-            Text = tostring(Text or '');
-            TextXAlignment = Enum.TextXAlignment.Left;
-            TextSize = 15;
-            RichText = true;
-            ZIndex = 3;
-            Parent = TitleContainer;
-        });
-    end;
-
-    local TitleWords = Config.TitleWords;
-    if type(TitleWords) ~= 'table' or #TitleWords == 0 then
-        local base = (typeof(Config.SubTitle) == 'string' and Config.SubTitle ~= '' and Config.SubTitle)
-            or (typeof(Config.SubName) == 'string' and Config.SubName ~= '' and Config.SubName)
-            or Config.Title
-            or 'Project X';
-        TitleWords = {
-            base;
-            'On top';
-            'Best Auto dupe';
-            'And universal';
-            'Script';
-            '7+ games';
-            'supported';
-        };
-    end;
-
-    local WindowLabel = MakeCycleLabel(TitleWords[1], UDim2.new(0, 0, 0, 0));
-    local TitleCycleRunning = true;
-
-    task.spawn(function()
-        local idx = 1;
-        local TweenService = game:GetService('TweenService');
-        while TitleCycleRunning and TitleContainer and TitleContainer.Parent do
-            task.wait(1.6);
-            if not (TitleCycleRunning and TitleContainer and TitleContainer.Parent) then break end;
-            if #TitleWords <= 1 then continue end;
-            local nextIdx = idx + 1;
-            if nextIdx > #TitleWords then nextIdx = 1 end;
-            local nextLabel = MakeCycleLabel(TitleWords[nextIdx], UDim2.new(1, 0, 0, 0));
-            local ti = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out);
-            pcall(function()
-                TweenService:Create(WindowLabel, ti, { Position = UDim2.new(-1, 0, 0, 0) }):Play();
-                TweenService:Create(nextLabel, ti, { Position = UDim2.new(0, 0, 0, 0) }):Play();
-            end);
-            task.wait(0.5);
-            pcall(function()
-                if WindowLabel then WindowLabel:Destroy() end;
-            end);
-            WindowLabel = nextLabel;
-            idx = nextIdx;
-            Window.Title = TitleWords[idx];
-        end;
-    end);
 
     -- MODIFIED: Main section with tabs at the top
     local MainSectionOuter = Library:Create('Frame', {
@@ -6009,20 +5378,7 @@ function Library:CreateWindow(...)
     function Window:SetWindowTitle(Title)
         if typeof(Title) == "string" then
             Window.Title = Title;
-            if WindowLabel and WindowLabel.Parent then
-                WindowLabel.Text = Window.Title;
-            end;
-        end
-    end;
-
-    -- Optional: replace the cycling word list at runtime
-    function Window:SetTitleWords(Words)
-        if type(Words) == 'table' and #Words > 0 then
-            TitleWords = Words;
-            if WindowLabel and WindowLabel.Parent then
-                WindowLabel.Text = tostring(Words[1]);
-            end;
-            Window.Title = tostring(Words[1]);
+            WindowLabel.Text = Window.Title;
         end
     end;
 
@@ -6091,7 +5447,6 @@ function Library:CreateWindow(...)
             ZIndex = 2;
             Parent = TabContentContainer;
         });
-        Tab.TabFrame = TabFrame;
 
         -- Top warning bar (same as original)
         local TopBar, TopBarInner, TopBarLabel, TopBarTextLabel, TopBarLabelStroke, TopBarHighlight; 
@@ -6464,375 +5819,6 @@ function Library:CreateWindow(...)
 
         function Tab:AddRightGroupbox(Name)
             return Tab:AddGroupbox({ Side = 2; Name = Name; });
-        end;
-
-        -- ========================= GLOBAL CHAT (1up feature — full) =========================
-        -- Usage: local Chat = Tab:GlobalChat(1) -- side 1 left, 2 right
-        function Tab:GlobalChat(Side)
-            Side = (Side == 2) and 2 or 1;
-
-            local ChatAPI = {
-                _onSend = nil;
-                _statusText = 'Online';
-                _statusColor = Color3.fromRGB(62, 255, 91);
-                _messages = {};
-                _maxMessages = 80;
-                _showTimestamps = false;
-            };
-
-            local chatH = Library.IsMobile and 360 or 320;
-
-            local BoxOuter = Library:Create('Frame', {
-                BackgroundColor3 = Library.BackgroundColor;
-                BorderColor3 = Library.OutlineColor;
-                BorderMode = Enum.BorderMode.Inset;
-                Size = UDim2.new(1, 0, 0, chatH);
-                ZIndex = 2;
-                Parent = Side == 1 and LeftSide or RightSide;
-            });
-
-            Library:Create('UICorner', {
-                CornerRadius = UDim.new(0, 8);
-                Parent = BoxOuter;
-            });
-
-            Library:AddToRegistry(BoxOuter, {
-                BackgroundColor3 = 'BackgroundColor';
-                BorderColor3 = 'OutlineColor';
-            });
-
-            local BoxInner = Library:Create('Frame', {
-                BackgroundColor3 = Library.BackgroundColor;
-                BorderColor3 = Color3.new(0, 0, 0);
-                Size = UDim2.new(1, -2, 1, -2);
-                Position = UDim2.new(0, 1, 0, 1);
-                ZIndex = 4;
-                Parent = BoxOuter;
-            });
-
-            Library:Create('UICorner', {
-                CornerRadius = UDim.new(0, 8);
-                Parent = BoxInner;
-            });
-
-            Library:AddToRegistry(BoxInner, {
-                BackgroundColor3 = 'BackgroundColor';
-            });
-
-            local Highlight = Library:Create('Frame', {
-                BackgroundColor3 = Library.AccentColor;
-                BorderSizePixel = 0;
-                Size = UDim2.new(1, 0, 0, 2);
-                ZIndex = 10;
-                Parent = BoxInner;
-            });
-            Library:AddToRegistry(Highlight, { BackgroundColor3 = 'AccentColor' });
-
-            local Header = Library:Create('Frame', {
-                BackgroundTransparency = 1;
-                Position = UDim2.new(0, 6, 0, 6);
-                Size = UDim2.new(1, -12, 0, 20);
-                ZIndex = 5;
-                Parent = BoxInner;
-            });
-
-            local TitleLabel = Library:CreateLabel({
-                Size = UDim2.new(0.5, 0, 1, 0);
-                Text = 'Global Chat';
-                TextSize = 14;
-                TextXAlignment = Enum.TextXAlignment.Left;
-                ZIndex = 6;
-                Parent = Header;
-            });
-
-            local StatusDot = Library:Create('Frame', {
-                BackgroundColor3 = ChatAPI._statusColor;
-                BorderSizePixel = 0;
-                Position = UDim2.new(1, -78, 0.5, -4);
-                Size = UDim2.new(0, 8, 0, 8);
-                ZIndex = 6;
-                Parent = Header;
-            });
-            Library:Create('UICorner', {
-                CornerRadius = UDim.new(1, 0);
-                Parent = StatusDot;
-            });
-
-            local StatusLabel = Library:CreateLabel({
-                Position = UDim2.new(1, -66, 0, 0);
-                Size = UDim2.new(0, 66, 1, 0);
-                Text = ChatAPI._statusText;
-                TextSize = 12;
-                TextXAlignment = Enum.TextXAlignment.Left;
-                ZIndex = 6;
-                Parent = Header;
-            });
-
-            local Scroll = Library:Create('ScrollingFrame', {
-                BackgroundColor3 = Library.MainColor;
-                BorderColor3 = Library.OutlineColor;
-                BorderMode = Enum.BorderMode.Inset;
-                Position = UDim2.new(0, 6, 0, 30);
-                Size = UDim2.new(1, -12, 1, -72);
-                CanvasSize = UDim2.new(0, 0, 0, 0);
-                ScrollBarThickness = 3;
-                ScrollBarImageColor3 = Library.AccentColor;
-                AutomaticCanvasSize = Enum.AutomaticSize.Y;
-                ZIndex = 5;
-                Parent = BoxInner;
-            });
-
-            Library:Create('UICorner', {
-                CornerRadius = UDim.new(0, 6);
-                Parent = Scroll;
-            });
-
-            Library:AddToRegistry(Scroll, {
-                BackgroundColor3 = 'MainColor';
-                BorderColor3 = 'OutlineColor';
-                ScrollBarImageColor3 = 'AccentColor';
-            });
-
-            Library:Create('UIListLayout', {
-                Padding = UDim.new(0, 6);
-                FillDirection = Enum.FillDirection.Vertical;
-                SortOrder = Enum.SortOrder.LayoutOrder;
-                Parent = Scroll;
-            });
-
-            Library:Create('UIPadding', {
-                PaddingTop = UDim.new(0, 6);
-                PaddingBottom = UDim.new(0, 6);
-                PaddingLeft = UDim.new(0, 6);
-                PaddingRight = UDim.new(0, 6);
-                Parent = Scroll;
-            });
-
-            local InputRow = Library:Create('Frame', {
-                BackgroundTransparency = 1;
-                Position = UDim2.new(0, 6, 1, -36);
-                Size = UDim2.new(1, -12, 0, 28);
-                ZIndex = 5;
-                Parent = BoxInner;
-            });
-
-            local InputBox = Library:Create('TextBox', {
-                BackgroundColor3 = Library.MainColor;
-                BorderColor3 = Library.OutlineColor;
-                BorderMode = Enum.BorderMode.Inset;
-                Size = UDim2.new(1, -64, 1, 0);
-                Font = Library.Font;
-                PlaceholderText = 'Type a message...';
-                PlaceholderColor3 = Library.DisabledTextColor;
-                Text = '';
-                TextColor3 = Library.FontColor;
-                TextSize = 13;
-                TextXAlignment = Enum.TextXAlignment.Left;
-                ClearTextOnFocus = false;
-                ZIndex = 6;
-                Parent = InputRow;
-            });
-
-            Library:Create('UICorner', {
-                CornerRadius = UDim.new(0, 4);
-                Parent = InputBox;
-            });
-
-            Library:AddToRegistry(InputBox, {
-                BackgroundColor3 = 'MainColor';
-                BorderColor3 = 'OutlineColor';
-                TextColor3 = 'FontColor';
-            });
-
-            Library:Create('UIPadding', {
-                PaddingLeft = UDim.new(0, 8);
-                Parent = InputBox;
-            });
-
-            local SendBtn = Library:Create('TextButton', {
-                BackgroundColor3 = Library.AccentColor;
-                BorderSizePixel = 0;
-                Position = UDim2.new(1, -58, 0, 0);
-                Size = UDim2.new(0, 58, 1, 0);
-                Font = Library.Font;
-                Text = 'Send';
-                TextColor3 = Color3.new(1, 1, 1);
-                TextSize = 13;
-                AutoButtonColor = false;
-                ZIndex = 6;
-                Parent = InputRow;
-            });
-
-            Library:Create('UICorner', {
-                CornerRadius = UDim.new(0, 4);
-                Parent = SendBtn;
-            });
-
-            Library:AddToRegistry(SendBtn, {
-                BackgroundColor3 = 'AccentColor';
-            });
-
-            local function scrollToBottom()
-                task.defer(function()
-                    Scroll.CanvasPosition = Vector2.new(0, math.max(0, Scroll.AbsoluteCanvasSize.Y));
-                end);
-            end;
-
-            local function resolveAvatar(Avatar)
-                if typeof(Avatar) == 'number' then
-                    return 'rbxassetid://' .. tostring(Avatar);
-                end;
-                if typeof(Avatar) == 'string' and Avatar ~= '' then
-                    if Avatar:match('^%d+$') then
-                        return 'rbxassetid://' .. Avatar;
-                    end;
-                    return Avatar;
-                end;
-                return 'rbxassetid://0';
-            end;
-
-            local function pruneMessages()
-                while #ChatAPI._messages > ChatAPI._maxMessages do
-                    local old = table.remove(ChatAPI._messages, 1);
-                    if old and old.Destroy then
-                        pcall(function() old:Destroy() end);
-                    end;
-                end;
-            end;
-
-            function ChatAPI:SendMessage(Avatar, Username, Message, IsLocal)
-                Username = tostring(Username or 'Unknown');
-                Message = tostring(Message or '');
-
-                local Row = Library:Create('Frame', {
-                    BackgroundTransparency = 1;
-                    Size = UDim2.new(1, -4, 0, 0);
-                    AutomaticSize = Enum.AutomaticSize.Y;
-                    ZIndex = 6;
-                    Parent = Scroll;
-                });
-
-                local AvatarImg = Library:Create('ImageLabel', {
-                    BackgroundColor3 = Color3.fromRGB(40, 40, 48);
-                    BorderSizePixel = 0;
-                    Size = UDim2.new(0, 28, 0, 28);
-                    Image = resolveAvatar(Avatar);
-                    ZIndex = 7;
-                    Parent = Row;
-                });
-                Library:Create('UICorner', {
-                    CornerRadius = UDim.new(1, 0);
-                    Parent = AvatarImg;
-                });
-
-                local nameText = Username;
-                if ChatAPI._showTimestamps then
-                    local t = os.date('*t');
-                    nameText = string.format('[%02d:%02d] %s', t.hour, t.min, Username);
-                end;
-
-                local NameL = Library:CreateLabel({
-                    Position = UDim2.new(0, 34, 0, 0);
-                    Size = UDim2.new(1, -34, 0, 14);
-                    Text = nameText;
-                    TextSize = 12;
-                    TextXAlignment = Enum.TextXAlignment.Left;
-                    TextColor3 = IsLocal and Library.AccentColor or Library.FontColor;
-                    ZIndex = 7;
-                    Parent = Row;
-                });
-                if IsLocal then
-                    Library:AddToRegistry(NameL, { TextColor3 = 'AccentColor' });
-                end;
-
-                local MsgL = Library:CreateLabel({
-                    Position = UDim2.new(0, 34, 0, 14);
-                    Size = UDim2.new(1, -34, 0, 0);
-                    Text = Message;
-                    TextSize = 13;
-                    TextXAlignment = Enum.TextXAlignment.Left;
-                    TextWrapped = true;
-                    TextYAlignment = Enum.TextYAlignment.Top;
-                    ZIndex = 7;
-                    Parent = Row;
-                });
-
-                local bounds = select(2, Library:GetTextBounds(Message, Library.Font, 13 * DPIScale, Vector2.new(math.max(80, Scroll.AbsoluteSize.X - 50), 1000)));
-                MsgL.Size = UDim2.new(1, -34, 0, math.max(16, bounds + 2));
-                Row.Size = UDim2.new(1, -4, 0, math.max(32, 16 + MsgL.Size.Y.Offset));
-
-                table.insert(ChatAPI._messages, Row);
-                pruneMessages();
-                scrollToBottom();
-                return Row;
-            end;
-
-            function ChatAPI:GetTypedMessage()
-                return InputBox.Text or '';
-            end;
-
-            function ChatAPI:ClearText()
-                InputBox.Text = '';
-            end;
-
-            function ChatAPI:ClearMessages()
-                for _, row in ipairs(ChatAPI._messages) do
-                    pcall(function() row:Destroy() end);
-                end;
-                table.clear(ChatAPI._messages);
-            end;
-
-            function ChatAPI:GetMessageCount()
-                return #ChatAPI._messages;
-            end;
-
-            function ChatAPI:SetMaxMessages(n)
-                ChatAPI._maxMessages = math.max(10, tonumber(n) or 80);
-                pruneMessages();
-            end;
-
-            function ChatAPI:SetTimestamps(enabled)
-                ChatAPI._showTimestamps = enabled and true or false;
-            end;
-
-            function ChatAPI:SetTitle(text)
-                TitleLabel.Text = tostring(text or 'Global Chat');
-            end;
-
-            function ChatAPI:SetPlaceholder(text)
-                InputBox.PlaceholderText = tostring(text or 'Type a message...');
-            end;
-
-            function ChatAPI:SetStatus(Text, Color)
-                ChatAPI._statusText = tostring(Text or 'Online');
-                StatusLabel.Text = ChatAPI._statusText;
-                if typeof(Color) == 'Color3' then
-                    ChatAPI._statusColor = Color;
-                    StatusDot.BackgroundColor3 = Color;
-                end;
-            end;
-
-            function ChatAPI:OnMessageSendPressed(Callback)
-                if typeof(Callback) == 'function' then
-                    ChatAPI._onSend = Callback;
-                end;
-            end;
-
-            local function fireSend()
-                local text = InputBox.Text;
-                if not text or not text:match('%S') then return end;
-                if ChatAPI._onSend then
-                    Library:SafeCallback(ChatAPI._onSend, text);
-                end;
-                -- do not auto-clear here; scripts can ClearText() after send
-            end;
-
-            SendBtn.MouseButton1Click:Connect(fireSend);
-            InputBox.FocusLost:Connect(function(enter)
-                if enter then fireSend() end;
-            end);
-
-            return ChatAPI;
         end;
 
         function Tab:AddTabbox(Info)
@@ -7367,18 +6353,13 @@ function Library:CreateWindow(...)
     if Config.AutoShow then task.spawn(Library.Toggle) end
 
     Window.Holder = Outer;
+    Window.Outer = Outer;
+    Window.Inner = Inner;
 
     Library.Window = Window;
-
-    -- Attach option search after Library.AttachOptionSearch is defined (end of file)
-    task.defer(function()
-        pcall(function()
-            if type(Library.AttachOptionSearch) == "function" and Window.Inner then
-                Library.AttachOptionSearch(Window);
-            end;
-        end);
-    end);
-
+    pcall(function()
+        Library.AttachOptionSearch(Window)
+    end)
     return Window;
 end;
 
@@ -7415,454 +6396,13 @@ Library:GiveSignal(Players.PlayerRemoving:Connect(OnPlayerChange));
 Library:GiveSignal(Teams.ChildAdded:Connect(OnTeamChange));
 Library:GiveSignal(Teams.ChildRemoved:Connect(OnTeamChange));
 
-if getgenv().skip_getgenv_linoria ~= true then getgenv().Library = Library end
--- =====================================================
--- OPTION SEARCH + MULTI CONFIG (Linoria-style SaveManager)
--- =====================================================
 
-Library.Windows = Library.Windows or {};
 
-local HttpService = game:GetService("HttpService");
-
-local function sm_isfolder(p)
-    local ok, r = pcall(function() return isfolder(p) end)
-    return ok and r
-end
-local function sm_isfile(p)
-    local ok, r = pcall(function() return isfile(p) end)
-    return ok and r
-end
-local function sm_makefolder(p)
-    pcall(function() makefolder(p) end)
-end
-local function sm_writefile(p, d)
-    local ok, err = pcall(function() writefile(p, d) end)
-    return ok, err
-end
-local function sm_readfile(p)
-    local ok, r = pcall(function() return readfile(p) end)
-    return ok and r or nil
-end
-local function sm_listfiles(p)
-    local ok, r = pcall(function() return listfiles(p) end)
-    return (ok and type(r) == "table") and r or {}
-end
-local function sm_delfile(p)
-    local ok = pcall(function() delfile(p) end)
-    return ok
-end
-
--- ===================== LINORIA-STYLE SAVEMANAGER =====================
-local SaveManager = {} do
-    SaveManager.Folder = "LinoriaLibSettings"
-    SaveManager.SubFolder = ""
-    SaveManager.Ignore = {}
-    SaveManager.Library = nil
-    SaveManager.Parser = {
-        Toggle = {
-            Save = function(idx, object)
-                return { type = "Toggle", idx = idx, value = object.Value }
-            end,
-            Load = function(idx, data)
-                local object = SaveManager.Library.Toggles[idx]
-                if object and object.SetValue and object.Value ~= data.value then
-                    object:SetValue(data.value)
-                end
-            end,
-        },
-        Slider = {
-            Save = function(idx, object)
-                return { type = "Slider", idx = idx, value = tostring(object.Value) }
-            end,
-            Load = function(idx, data)
-                local object = SaveManager.Library.Options[idx]
-                if object and object.SetValue then
-                    object:SetValue(data.value)
-                end
-            end,
-        },
-        Dropdown = {
-            Save = function(idx, object)
-                return { type = "Dropdown", idx = idx, value = object.Value, multi = object.Multi }
-            end,
-            Load = function(idx, data)
-                local object = SaveManager.Library.Options[idx]
-                if object and object.SetValue then
-                    object:SetValue(data.value)
-                end
-            end,
-        },
-        ColorPicker = {
-            Save = function(idx, object)
-                local v = object.Value
-                local hex = (typeof(v) == "Color3" and v.ToHex) and v:ToHex() or "ffffff"
-                return { type = "ColorPicker", idx = idx, value = hex, transparency = object.Transparency }
-            end,
-            Load = function(idx, data)
-                local object = SaveManager.Library.Options[idx]
-                if object then
-                    local col = Color3.fromHex(data.value)
-                    if object.SetValueRGB then
-                        object:SetValueRGB(col, data.transparency)
-                    elseif object.SetValue then
-                        object:SetValue(col)
-                    end
-                end
-            end,
-        },
-        KeyPicker = {
-            Save = function(idx, object)
-                return { type = "KeyPicker", idx = idx, mode = object.Mode, key = object.Value, modifiers = object.Modifiers }
-            end,
-            Load = function(idx, data)
-                local object = SaveManager.Library.Options[idx]
-                if object and object.SetValue then
-                    object:SetValue({ data.key, data.mode, data.modifiers })
-                end
-            end,
-        },
-        Input = {
-            Save = function(idx, object)
-                return { type = "Input", idx = idx, text = object.Value }
-            end,
-            Load = function(idx, data)
-                local object = SaveManager.Library.Options[idx]
-                if object and object.SetValue and type(data.text) == "string" then
-                    object:SetValue(data.text)
-                end
-            end,
-        },
-    }
-
-    function SaveManager:SetLibrary(library)
-        self.Library = library
-        if library then
-            library.SaveManager = self
-            library.Toggles = library.Toggles or Toggles
-            library.Options = library.Options or Options
-        end
-    end
-
-    function SaveManager:IgnoreThemeSettings()
-        self:SetIgnoreIndexes({
-            "BackgroundColor", "MainColor", "AccentColor", "OutlineColor", "FontColor",
-            "ThemeManager_ThemeList", "ThemeManager_CustomThemeList", "ThemeManager_CustomThemeName",
-            "VideoLink",
-        })
-    end
-
-    function SaveManager:SetIgnoreIndexes(list)
-        for _, key in next, list do
-            self.Ignore[key] = true
-        end
-    end
-
-    function SaveManager:CheckSubFolder(createFolder)
-        if typeof(self.SubFolder) ~= "string" or self.SubFolder == "" then return false end
-        if createFolder == true then
-            local path = self.Folder .. "/settings/" .. self.SubFolder
-            if not sm_isfolder(path) then sm_makefolder(path) end
-        end
-        return true
-    end
-
-    function SaveManager:BuildFolderTree()
-        local paths = {}
-        local parts = self.Folder:split("/")
-        for idx = 1, #parts do
-            paths[#paths + 1] = table.concat(parts, "/", 1, idx)
-        end
-        paths[#paths + 1] = self.Folder .. "/themes"
-        paths[#paths + 1] = self.Folder .. "/settings"
-        if self:CheckSubFolder(false) then
-            local sub = self.Folder .. "/settings/" .. self.SubFolder
-            local sp = sub:split("/")
-            for idx = 1, #sp do
-                paths[#paths + 1] = table.concat(sp, "/", 1, idx)
-            end
-        end
-        for i = 1, #paths do
-            if not sm_isfolder(paths[i]) then sm_makefolder(paths[i]) end
-        end
-    end
-
-    function SaveManager:CheckFolderTree()
-        if sm_isfolder(self.Folder) then return end
-        self:BuildFolderTree()
-        task.wait(0.1)
-    end
-
-    function SaveManager:SetFolder(folder)
-        self.Folder = folder
-        self:BuildFolderTree()
-    end
-
-    function SaveManager:SetSubFolder(folder)
-        self.SubFolder = folder
-        self:BuildFolderTree()
-    end
-
-    function SaveManager:Save(name)
-        if not name then return false, "no config file is selected" end
-        self:CheckFolderTree()
-
-        local fullPath = self.Folder .. "/settings/" .. name .. ".json"
-        if self:CheckSubFolder(true) then
-            fullPath = self.Folder .. "/settings/" .. self.SubFolder .. "/" .. name .. ".json"
-        end
-
-        local data = { objects = {} }
-        local Lib = self.Library or Library
-
-        for idx, toggle in next, (Lib.Toggles or Toggles) do
-            if toggle.Type and self.Parser[toggle.Type] and not self.Ignore[idx] then
-                table.insert(data.objects, self.Parser[toggle.Type].Save(idx, toggle))
-            end
-        end
-        for idx, option in next, (Lib.Options or Options) do
-            if option.Type and self.Parser[option.Type] and not self.Ignore[idx] then
-                table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
-            end
-        end
-
-        local success, encoded = pcall(HttpService.JSONEncode, HttpService, data)
-        if not success then return false, "failed to encode data" end
-
-        local ok = sm_writefile(fullPath, encoded)
-        if not ok then return false, "failed to write file" end
-        return true
-    end
-
-    function SaveManager:Load(name)
-        if not name then return false, "no config file is selected" end
-        self:CheckFolderTree()
-
-        local file = self.Folder .. "/settings/" .. name .. ".json"
-        if self:CheckSubFolder(true) then
-            file = self.Folder .. "/settings/" .. self.SubFolder .. "/" .. name .. ".json"
-        end
-        if not sm_isfile(file) then return false, "invalid file" end
-
-        local raw = sm_readfile(file)
-        if not raw then return false, "read error" end
-        local success, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
-        if not success then return false, "decode error" end
-
-        for _, option in ipairs(decoded.objects or {}) do
-            if option.type and self.Parser[option.type] and not self.Ignore[option.idx] then
-                task.spawn(self.Parser[option.type].Load, option.idx, option)
-            end
-        end
-        return true
-    end
-
-    function SaveManager:Delete(name)
-        if not name then return false, "no config file is selected" end
-        local file = self.Folder .. "/settings/" .. name .. ".json"
-        if self:CheckSubFolder(true) then
-            file = self.Folder .. "/settings/" .. self.SubFolder .. "/" .. name .. ".json"
-        end
-        if not sm_isfile(file) then return false, "invalid file" end
-        if not sm_delfile(file) then return false, "delete file error" end
-        return true
-    end
-
-    function SaveManager:RefreshConfigList()
-        local ok, data = pcall(function()
-            self:CheckFolderTree()
-            local list
-            if self:CheckSubFolder(true) then
-                list = sm_listfiles(self.Folder .. "/settings/" .. self.SubFolder)
-            else
-                list = sm_listfiles(self.Folder .. "/settings")
-            end
-            local out = {}
-            for i = 1, #list do
-                local file = list[i]
-                if file:sub(-5) == ".json" then
-                    local name = file:match("([^/\\]+)%.json$")
-                    if name and name ~= "autoload" then
-                        out[#out + 1] = name
-                    end
-                end
-            end
-            table.sort(out)
-            return out
-        end)
-        if not ok then return {} end
-        return data
-    end
-
-    function SaveManager:GetAutoloadConfig()
-        self:CheckFolderTree()
-        local autoLoadPath = self.Folder .. "/settings/autoload.txt"
-        if self:CheckSubFolder(true) then
-            autoLoadPath = self.Folder .. "/settings/" .. self.SubFolder .. "/autoload.txt"
-        end
-        if sm_isfile(autoLoadPath) then
-            local name = tostring(sm_readfile(autoLoadPath) or "")
-            return (name == "" and "none") or name
-        end
-        return "none"
-    end
-
-    function SaveManager:LoadAutoloadConfig()
-        local name = self:GetAutoloadConfig()
-        if name ~= "none" then
-            local success, err = self:Load(name)
-            if not success and self.Library then
-                self.Library:Notify("Failed to load autoload config: " .. tostring(err))
-            end
-        end
-    end
-
-    function SaveManager:SaveAutoloadConfig(name)
-        self:CheckFolderTree()
-        local autoLoadPath = self.Folder .. "/settings/autoload.txt"
-        if self:CheckSubFolder(true) then
-            autoLoadPath = self.Folder .. "/settings/" .. self.SubFolder .. "/autoload.txt"
-        end
-        sm_writefile(autoLoadPath, tostring(name or ""))
-        return true
-    end
-
-    function SaveManager:DeleteAutoLoadConfig()
-        local autoLoadPath = self.Folder .. "/settings/autoload.txt"
-        if self:CheckSubFolder(true) then
-            autoLoadPath = self.Folder .. "/settings/" .. self.SubFolder .. "/autoload.txt"
-        end
-        if sm_isfile(autoLoadPath) then sm_delfile(autoLoadPath) end
-        return true
-    end
-
-    function SaveManager:BuildConfigSection(tab)
-        assert(self.Library, "SaveManager:BuildConfigSection -> Must set SaveManager.Library")
-        local section = tab:AddRightGroupbox("Configuration")
-
-        section:AddInput("SaveManager_ConfigName", { Text = "Config name" })
-
-        section:AddButton("Create config", function()
-            local name = self.Library.Options.SaveManager_ConfigName.Value
-            if not name or name:gsub(" ", "") == "" then
-                self.Library:Notify("Invalid config name (empty)", 2)
-                return
-            end
-            local success, err = self:Save(name)
-            if not success then
-                self.Library:Notify("Failed to create config: " .. tostring(err))
-                return
-            end
-            self.Library:Notify(string.format('Created config "%s"', name))
-            self.Library.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
-            self.Library.Options.SaveManager_ConfigList:SetValue(nil)
-        end)
-
-        section:AddDivider()
-
-        section:AddDropdown("SaveManager_ConfigList", {
-            Text = "Config list",
-            Values = self:RefreshConfigList(),
-            AllowNull = true,
-        })
-
-        section:AddButton("Load config", function()
-            local name = self.Library.Options.SaveManager_ConfigList.Value
-            local success, err = self:Load(name)
-            if not success then
-                self.Library:Notify("Failed to load config: " .. tostring(err))
-                return
-            end
-            self.Library:Notify(string.format('Loaded config "%s"', tostring(name)))
-        end)
-
-        section:AddButton("Overwrite config", function()
-            local name = self.Library.Options.SaveManager_ConfigList.Value
-            local success, err = self:Save(name)
-            if not success then
-                self.Library:Notify("Failed to overwrite config: " .. tostring(err))
-                return
-            end
-            self.Library:Notify(string.format('Overwrote config "%s"', tostring(name)))
-        end)
-
-        section:AddButton("Delete config", function()
-            local name = self.Library.Options.SaveManager_ConfigList.Value
-            local success, err = self:Delete(name)
-            if not success then
-                self.Library:Notify("Failed to delete config: " .. tostring(err))
-                return
-            end
-            self.Library:Notify(string.format('Deleted config "%s"', tostring(name)))
-            self.Library.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
-            self.Library.Options.SaveManager_ConfigList:SetValue(nil)
-        end)
-
-        section:AddButton("Refresh list", function()
-            self.Library.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
-            self.Library.Options.SaveManager_ConfigList:SetValue(nil)
-        end)
-
-        section:AddButton("Set as autoload", function()
-            local name = self.Library.Options.SaveManager_ConfigList.Value
-            self:SaveAutoloadConfig(name)
-            self.Library:Notify(string.format('Set "%s" to auto load', tostring(name)))
-            if self.AutoloadConfigLabel then
-                self.AutoloadConfigLabel:SetText("Current autoload config: " .. self:GetAutoloadConfig())
-            end
-        end)
-
-        section:AddButton("Reset autoload", function()
-            self:DeleteAutoLoadConfig()
-            self.Library:Notify("Set autoload to none")
-            if self.AutoloadConfigLabel then
-                self.AutoloadConfigLabel:SetText("Current autoload config: none")
-            end
-        end)
-
-        self.AutoloadConfigLabel = section:AddLabel("Current autoload config: " .. self:GetAutoloadConfig(), true)
-        self:SetIgnoreIndexes({ "SaveManager_ConfigList", "SaveManager_ConfigName" })
-    end
-end
-
-Library.SaveManager = SaveManager
-pcall(function()
-    if getgenv then getgenv().SaveManager = SaveManager end
-end)
-
--- Keep Library:GetConfig / LoadConfig helpers (simple)
-function Library:GetConfig()
-    local data = { objects = {} }
-    for idx, toggle in next, Toggles do
-        if toggle.Type == "Toggle" then
-            table.insert(data.objects, { type = "Toggle", idx = idx, value = toggle.Value })
-        end
-    end
-    for idx, option in next, Options do
-        if option.Type and SaveManager.Parser[option.Type] then
-            table.insert(data.objects, SaveManager.Parser[option.Type].Save(idx, option))
-        end
-    end
-    local ok, encoded = pcall(HttpService.JSONEncode, HttpService, data)
-    return ok and encoded or "{}"
-end
-
-function Library:LoadConfig(json)
-    if type(json) ~= "string" then return end
-    local ok, decoded = pcall(HttpService.JSONDecode, HttpService, json)
-    if not ok or type(decoded) ~= "table" then return end
-    for _, option in ipairs(decoded.objects or {}) do
-        if option.type and SaveManager.Parser[option.type] then
-            task.spawn(SaveManager.Parser[option.type].Load, option.idx, option)
-        end
-    end
-end
-
--- ===================== OPTION SEARCH (fixed) =====================
+-- ===================== OPTION SEARCH (from enhanced Linoria) =====================
 local function attachSearchToWindow(Window, Outer, Inner)
     if not Window or not Inner or Window._SearchAttached then return end
     Window._SearchAttached = true
 
-    -- Use raw Instance.new for search UI so DPI/Create quirks can't blank it
     local SearchBox = Instance.new("TextBox")
     SearchBox.Name = "OptionSearch"
     SearchBox.BackgroundColor3 = Library.MainColor
@@ -7927,16 +6467,13 @@ local function attachSearchToWindow(Window, Outer, Inner)
         end
     end
 
-    -- Strict match: only starts-with on full text, flag, or any word (not random mid-letter hits)
     local function matchesQuery(text, idx, query)
         if not query or #query < 2 then return false end
         text = string.lower(tostring(text or ""))
         idx = string.lower(tostring(idx or ""))
         query = string.lower(query)
-
         if text:sub(1, #query) == query then return true end
         if idx:sub(1, #query) == query then return true end
-
         for word in text:gmatch("%S+") do
             if word:sub(1, #query) == query then return true end
         end
@@ -7950,7 +6487,6 @@ local function attachSearchToWindow(Window, Outer, Inner)
         query = tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", "")
         local results = {}
         if #query < 2 then return results end
-
         for idx, toggle in pairs(Toggles) do
             if type(idx) == "string" and toggle then
                 local text = tostring(toggle.Text or toggle.OriginalText or idx)
@@ -7961,7 +6497,6 @@ local function attachSearchToWindow(Window, Outer, Inner)
         end
         for idx, option in pairs(Options) do
             if type(idx) == "string" and option then
-                -- skip internal config/search controls
                 if idx:find("SaveManager_", 1, true) then continue end
                 local text = tostring(option.Text or option.OriginalText or idx)
                 if matchesQuery(text, idx, query) then
@@ -7987,8 +6522,6 @@ local function attachSearchToWindow(Window, Outer, Inner)
         if not entry or not entry.Object then return end
         local label = entry.Object.TextLabel or entry.Object.Container
         local foundTab = nil
-
-        -- Window.Tabs is a dictionary { [Name] = Tab }, not an array
         if label and typeof(label) == "Instance" and label.Parent then
             for _, tab in pairs(Window.Tabs or {}) do
                 if type(tab) == "table" and tab.TabFrame and label:IsDescendantOf(tab.TabFrame) then
@@ -8005,17 +6538,12 @@ local function attachSearchToWindow(Window, Outer, Inner)
                 end
             end
         end
-
         if foundTab then
             pcall(function()
-                if foundTab.ShowTab then
-                    foundTab:ShowTab()
-                elseif foundTab.Show then
-                    foundTab:Show()
-                end
+                if foundTab.ShowTab then foundTab:ShowTab()
+                elseif foundTab.Show then foundTab:Show() end
             end)
         end
-
         task.defer(function()
             local target = entry.Object.TextLabel or entry.Object.Container
             if target and typeof(target) == "Instance" and target.Parent then
@@ -8031,8 +6559,9 @@ local function attachSearchToWindow(Window, Outer, Inner)
                 end
             end
         end)
-
-        Library:Notify("Found: " .. tostring(entry.Text), 1.5)
+        if Library.Notify then
+            Library:Notify("Found: " .. tostring(entry.Text), 1.5)
+        end
         Results.Visible = false
         SearchBox.Text = ""
     end
@@ -8045,10 +6574,8 @@ local function attachSearchToWindow(Window, Outer, Inner)
             Results.Size = UDim2.new(0, 220, 0, 0)
             return
         end
-
         local results = collectResults(q)
         local maxShow = math.min(#results, 10)
-
         if maxShow == 0 then
             local empty = Instance.new("TextButton")
             empty.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
@@ -8067,7 +6594,6 @@ local function attachSearchToWindow(Window, Outer, Inner)
             Scroll.CanvasSize = UDim2.new(0, 0, 0, 30)
             return
         end
-
         for i = 1, maxShow do
             local entry = results[i]
             local btn = Instance.new("TextButton")
@@ -8082,16 +6608,13 @@ local function attachSearchToWindow(Window, Outer, Inner)
             btn.AutoButtonColor = true
             btn.ZIndex = 212
             btn.Parent = Scroll
-
             local c = Instance.new("UICorner")
             c.CornerRadius = UDim.new(0, 4)
             c.Parent = btn
-
             btn.MouseButton1Click:Connect(function()
                 jumpTo(entry)
             end)
         end
-
         local h = math.clamp(maxShow * 35 + 10, 42, 240)
         Results.Size = UDim2.new(0, 220, 0, h)
         Scroll.CanvasSize = UDim2.new(0, 0, 0, maxShow * 35)
@@ -8128,8 +6651,7 @@ task.defer(function()
 end)
 
 -- ===================== KEYBIND SHOWER (OPT-IN, PC) =====================
--- Default OFF. Enable in your script:
---   Library.ShowKeybindHints = true
+-- Default OFF. Enable: Library.ShowKeybindHints = true
 -- Manual: Library:ShowKeybindHint("Aimbot", "MB2", "Hold")
 
 function Library:ShowKeybindHint(featureName, key, mode)
@@ -8200,7 +6722,7 @@ function Library:ShowKeybindHint(featureName, key, mode)
 end
 
 -- ===================== FAVORITES (OPT-IN) =====================
--- Enable in your script BEFORE creating toggles, or call EnableFavoritesSystem() after:
+-- Enable BEFORE creating toggles, or call EnableFavoritesSystem() after:
 --   Library.FavoritesEnabled = true
 --   Library:EnableFavoritesSystem()
 
@@ -8209,7 +6731,6 @@ function Library:_AttachFavoriteStar(Toggle, Idx, ToggleLabel)
     if not Toggle or Toggle.FavoriteButton then return end
     if not ToggleLabel or not ToggleLabel.Parent then return end
 
-    -- Put star in the addon row (same row as keybind/color), LAST item = true end
     local Star = Instance.new("TextButton")
     Star.Name = "FavoriteStar"
     Star.BackgroundTransparency = 1
@@ -8221,13 +6742,20 @@ function Library:_AttachFavoriteStar(Toggle, Idx, ToggleLabel)
     Star.Font = Library.Font
     Star.ZIndex = 15
     Star.AutoButtonColor = false
-    Star.LayoutOrder = 9999 -- after KeyPicker / ColorPicker in the horizontal list
+    Star.LayoutOrder = 9999
     Star.Parent = ToggleLabel
 
     Toggle.FavoriteButton = Star
     Star.MouseButton1Click:Connect(function()
         local fav = not (Library.Favorites and Library.Favorites[Idx])
-        Toggle:SetFavorite(fav)
+        if Toggle.SetFavorite then
+            Toggle:SetFavorite(fav)
+        else
+            Library.Favorites = Library.Favorites or {}
+            Library.Favorites[Idx] = fav or nil
+            if not fav then Library.Favorites[Idx] = nil end
+            pcall(function() Library:RefreshFavoritesPanel() end)
+        end
         Star.Text = fav and "★" or "☆"
         Star.TextColor3 = fav and Library.AccentColor or Library.DisabledTextColor
     end)
@@ -8236,12 +6764,24 @@ end
 function Library:EnableFavoritesSystem()
     Library.FavoritesEnabled = true
     Library.Favorites = Library.Favorites or {}
-    -- Attach stars to toggles already created
     for idx, toggle in pairs(Toggles) do
-        if type(toggle) == "table" and toggle.TextLabel then
-            pcall(function()
-                Library:_AttachFavoriteStar(toggle, idx, toggle.TextLabel)
-            end)
+        if type(toggle) == "table" then
+            if not toggle.SetFavorite then
+                toggle.SetFavorite = function(self, fav)
+                    Library.Favorites = Library.Favorites or {}
+                    if fav then
+                        Library.Favorites[idx] = true
+                    else
+                        Library.Favorites[idx] = nil
+                    end
+                    pcall(function() Library:RefreshFavoritesPanel() end)
+                end
+            end
+            if toggle.TextLabel then
+                pcall(function()
+                    Library:_AttachFavoriteStar(toggle, idx, toggle.TextLabel)
+                end)
+            end
         end
     end
     pcall(function()
@@ -8250,7 +6790,6 @@ function Library:EnableFavoritesSystem()
     end)
 end
 
--- ===================== FAVORITES OVERLAY (side screen, drag, close) =====================
 function Library:EnsureFavoritesPanel()
     if not Library.FavoritesEnabled then return nil end
     if not ScreenGui then return nil end
@@ -8417,7 +6956,12 @@ function Library:RefreshFavoritesPanel()
             star.ZIndex = 254
             star.Parent = row
             star.MouseButton1Click:Connect(function()
-                toggle:SetFavorite(false)
+                if toggle.SetFavorite then
+                    toggle:SetFavorite(false)
+                else
+                    Library.Favorites[idx] = nil
+                    Library:RefreshFavoritesPanel()
+                end
                 if toggle.FavoriteButton then
                     toggle.FavoriteButton.Text = "☆"
                     toggle.FavoriteButton.TextColor3 = Library.DisabledTextColor
@@ -8434,6 +6978,7 @@ function Library:RefreshFavoritesPanel()
                 if toggle.SetValue then
                     toggle:SetValue(not toggle.Value)
                 end
+                Library:RefreshFavoritesPanel()
             end)
         end
     end
@@ -8461,4 +7006,626 @@ do
     end
 end
 
+-- Hook CreateWindow to auto-attach search
+do
+    local oldCreateWindow = Library.CreateWindow
+    if type(oldCreateWindow) == "function" then
+        Library.CreateWindow = function(self, ...)
+            local Window = oldCreateWindow(self, ...)
+            pcall(function()
+                if Window and Window.Inner then
+                    Library.AttachOptionSearch(Window)
+                end
+            end)
+            return Window
+        end
+    end
+end
+
+
+
+-- ===================== GLOBAL CHAT (OPT-IN) =====================
+-- Library:EnableGlobalChat()  or  Library:CreateGlobalChat({ Position = ..., MaxMessages = 50 })
+-- Toggle: Library:SetGlobalChatVisible(true/false)
+-- Send local note: Library:AddGlobalChatMessage("System", "hello", Color3.new(1,1,1))
+
+Library.GlobalChatEnabled = false
+Library.GlobalChatVisible = true
+Library.GlobalChatMaxMessages = 40
+
+function Library:AddGlobalChatMessage(author, message, color)
+    if not Library._GlobalChatScroll then return end
+    author = tostring(author or "???")
+    message = tostring(message or "")
+    color = color or Color3.fromRGB(230, 230, 240)
+
+    local row = Instance.new("TextLabel")
+    row.BackgroundTransparency = 1
+    row.Size = UDim2.new(1, -8, 0, 0)
+    row.AutomaticSize = Enum.AutomaticSize.Y
+    row.Font = Library.Font
+    row.TextSize = 13
+    row.TextXAlignment = Enum.TextXAlignment.Left
+    row.TextYAlignment = Enum.TextYAlignment.Top
+    row.TextWrapped = true
+    row.RichText = true
+    row.TextColor3 = color
+    row.Text = string.format("<font color=\"#8ec7ff\">[%s]</font> %s", author:gsub("[<>]", ""), message:gsub("[<>]", ""))
+    row.ZIndex = 262
+    row.Parent = Library._GlobalChatScroll
+
+    -- cap messages
+    local kids = {}
+    for _, c in ipairs(Library._GlobalChatScroll:GetChildren()) do
+        if c:IsA("TextLabel") then kids[#kids + 1] = c end
+    end
+    while #kids > (Library.GlobalChatMaxMessages or 40) do
+        kids[1]:Destroy()
+        table.remove(kids, 1)
+    end
+
+    task.defer(function()
+        if Library._GlobalChatScroll then
+            local layout = Library._GlobalChatScroll:FindFirstChildOfClass("UIListLayout")
+            if layout then
+                Library._GlobalChatScroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
+                Library._GlobalChatScroll.CanvasPosition = Vector2.new(0, math.max(0, layout.AbsoluteContentSize.Y))
+            end
+        end
+    end)
+end
+
+function Library:SetGlobalChatVisible(vis)
+    Library.GlobalChatVisible = vis and true or false
+    if Library._GlobalChatPanel then
+        Library._GlobalChatPanel.Visible = Library.GlobalChatVisible
+    end
+end
+
+function Library:CreateGlobalChat(config)
+    config = config or {}
+    if Library._GlobalChatPanel and Library._GlobalChatPanel.Parent then
+        Library:SetGlobalChatVisible(true)
+        return Library._GlobalChatPanel
+    end
+
+    Library.GlobalChatEnabled = true
+    Library.GlobalChatMaxMessages = config.MaxMessages or 40
+
+    local panel = Instance.new("Frame")
+    panel.Name = "GlobalChatPanel"
+    panel.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
+    panel.BackgroundTransparency = 0.12
+    panel.BorderSizePixel = 0
+    panel.Size = config.Size or UDim2.new(0, 320, 0, 200)
+    panel.Position = config.Position or UDim2.new(0, 12, 1, -220)
+    panel.ZIndex = 260
+    panel.Active = true
+    panel.Visible = Library.GlobalChatVisible
+    panel.Parent = ScreenGui
+
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+    local stroke = Instance.new("UIStroke", panel)
+    stroke.Color = Library.AccentColor
+    stroke.Thickness = 1.2
+    stroke.Transparency = 0.35
+
+    local header = Instance.new("Frame")
+    header.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+    header.BorderSizePixel = 0
+    header.Size = UDim2.new(1, 0, 0, 28)
+    header.ZIndex = 261
+    header.Parent = panel
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -60, 1, 0)
+    title.Position = UDim2.new(0, 10, 0, 0)
+    title.Font = Library.Font
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextColor3 = Library.AccentColor
+    title.Text = config.Title or "Global Chat"
+    title.ZIndex = 262
+    title.Parent = header
+
+    local hideBtn = Instance.new("TextButton")
+    hideBtn.BackgroundTransparency = 1
+    hideBtn.Size = UDim2.new(0, 28, 1, 0)
+    hideBtn.Position = UDim2.new(1, -28, 0, 0)
+    hideBtn.Font = Library.Font
+    hideBtn.TextSize = 16
+    hideBtn.Text = "×"
+    hideBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    hideBtn.ZIndex = 263
+    hideBtn.Parent = header
+    hideBtn.MouseButton1Click:Connect(function()
+        Library:SetGlobalChatVisible(false)
+    end)
+
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Name = "Messages"
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.Position = UDim2.new(0, 6, 0, 32)
+    scroll.Size = UDim2.new(1, -12, 1, -38)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.ScrollBarThickness = 3
+    scroll.ScrollBarImageColor3 = Library.AccentColor
+    scroll.ZIndex = 261
+    scroll.Parent = panel
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 3)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = scroll
+
+    Library._GlobalChatPanel = panel
+    Library._GlobalChatScroll = scroll
+
+    pcall(function()
+        Library:MakeDraggable(panel, 28, false)
+    end)
+
+    -- Hook player chat
+    if not Library._GlobalChatHooked then
+        Library._GlobalChatHooked = true
+        local function hookPlayer(plr)
+            pcall(function()
+                plr.Chatted:Connect(function(msg)
+                    if not Library.GlobalChatEnabled then return end
+                    local col = Color3.fromRGB(230, 230, 240)
+                    pcall(function()
+                        if plr.Team and plr.Team.TeamColor then
+                            col = plr.TeamColor.Color
+                        end
+                    end)
+                    Library:AddGlobalChatMessage(plr.DisplayName or plr.Name, msg, col)
+                end)
+            end)
+        end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            hookPlayer(plr)
+        end
+        Library:GiveSignal(Players.PlayerAdded:Connect(hookPlayer))
+    end
+
+    Library:AddGlobalChatMessage("System", "Global chat enabled", Color3.fromRGB(140, 200, 255))
+    return panel
+end
+
+function Library:EnableGlobalChat(config)
+    return Library:CreateGlobalChat(config)
+end
+
+-- ===================== ESP PREVIEW (OPT-IN) =====================
+-- Library:EnableESPPreview()
+-- Library:SetESPPreview({ Box = true, Name = true, Tracer = true, Health = true, Color = Color3 })
+-- Library:SetESPPreviewVisible(true/false)
+
+Library.ESPPreviewEnabled = false
+Library.ESPPreviewVisible = true
+Library.ESPPreviewSettings = {
+    Box = true,
+    Name = true,
+    Tracer = true,
+    Health = true,
+    Skeleton = false,
+    Color = Color3.fromRGB(0, 170, 255),
+}
+
+local function _espPreviewClearDrawings()
+    if not Library._ESPPreviewDrawings then return end
+    for _, d in ipairs(Library._ESPPreviewDrawings) do
+        pcall(function()
+            if d.Remove then d:Remove()
+            elseif d.Destroy then d:Destroy()
+            else d.Visible = false end
+        end)
+    end
+    Library._ESPPreviewDrawings = {}
+end
+
+local function _espPreviewNew(class)
+    if DrawingLib.drawing_replaced == true or type(DrawingLib.new) ~= "function" then
+        return nil
+    end
+    local ok, obj = pcall(DrawingLib.new, class)
+    if ok and obj then
+        Library._ESPPreviewDrawings = Library._ESPPreviewDrawings or {}
+        Library._ESPPreviewDrawings[#Library._ESPPreviewDrawings + 1] = obj
+        return obj
+    end
+    return nil
+end
+
+function Library:SetESPPreview(settings)
+    Library.ESPPreviewSettings = Library.ESPPreviewSettings or {}
+    if type(settings) == "table" then
+        for k, v in pairs(settings) do
+            Library.ESPPreviewSettings[k] = v
+        end
+    end
+    Library:_RefreshESPPreview()
+end
+
+function Library:SetESPPreviewVisible(vis)
+    Library.ESPPreviewVisible = vis and true or false
+    if Library._ESPPreviewPanel then
+        Library._ESPPreviewPanel.Visible = Library.ESPPreviewVisible
+    end
+    if not Library.ESPPreviewVisible then
+        _espPreviewClearDrawings()
+    else
+        Library:_RefreshESPPreview()
+    end
+end
+
+function Library:_RefreshESPPreview()
+    if not Library.ESPPreviewEnabled or not Library.ESPPreviewVisible then
+        _espPreviewClearDrawings()
+        return
+    end
+    if not Library._ESPPreviewViewport then return end
+
+    local s = Library.ESPPreviewSettings or {}
+    local color = s.Color or Library.AccentColor
+    local vp = Library._ESPPreviewViewport
+    local abs = vp.AbsolutePosition
+    local size = vp.AbsoluteSize
+    if size.X < 10 or size.Y < 10 then return end
+
+    -- Demo "player" rect in the middle of the preview viewport (screen space)
+    local cx = abs.X + size.X * 0.5
+    local cy = abs.Y + size.Y * 0.55
+    local boxW, boxH = size.X * 0.28, size.Y * 0.55
+    local x1, y1 = cx - boxW / 2, cy - boxH / 2
+    local x2, y2 = cx + boxW / 2, cy + boxH / 2
+
+    _espPreviewClearDrawings()
+
+    local useDrawing = false
+    if s.Box ~= false then
+        local sq = _espPreviewNew("Square")
+        if sq then
+            useDrawing = true
+            sq.Visible = true
+            sq.Filled = false
+            sq.Thickness = 1.5
+            sq.Color = color
+            sq.Size = Vector2.new(boxW, boxH)
+            sq.Position = Vector2.new(x1, y1)
+            sq.ZIndex = 50
+        end
+    end
+
+    if s.Name ~= false then
+        local txt = _espPreviewNew("Text")
+        if txt then
+            useDrawing = true
+            txt.Visible = true
+            txt.Text = "Player"
+            txt.Size = 14
+            txt.Center = true
+            txt.Outline = true
+            txt.Color = color
+            txt.Position = Vector2.new(cx, y1 - 16)
+            txt.ZIndex = 51
+        end
+    end
+
+    if s.Health ~= false then
+        local bar = _espPreviewNew("Square")
+        if bar then
+            useDrawing = true
+            bar.Visible = true
+            bar.Filled = true
+            bar.Thickness = 0
+            bar.Color = Color3.fromRGB(60, 220, 90)
+            bar.Size = Vector2.new(3, boxH * 0.72)
+            bar.Position = Vector2.new(x1 - 6, y2 - boxH * 0.72)
+            bar.ZIndex = 50
+        end
+        local barBg = _espPreviewNew("Square")
+        if barBg then
+            barBg.Visible = true
+            barBg.Filled = true
+            barBg.Thickness = 0
+            barBg.Color = Color3.fromRGB(30, 30, 30)
+            barBg.Size = Vector2.new(3, boxH)
+            barBg.Position = Vector2.new(x1 - 6, y1)
+            barBg.ZIndex = 49
+        end
+    end
+
+    if s.Tracer ~= false then
+        local line = _espPreviewNew("Line")
+        if line then
+            useDrawing = true
+            line.Visible = true
+            line.Thickness = 1.2
+            line.Color = color
+            line.From = Vector2.new(abs.X + size.X * 0.5, abs.Y + size.Y - 4)
+            line.To = Vector2.new(cx, y2)
+            line.ZIndex = 48
+        end
+    end
+
+    if s.Skeleton == true then
+        local function bone(a, b)
+            local ln = _espPreviewNew("Line")
+            if not ln then return end
+            ln.Visible = true
+            ln.Thickness = 1
+            ln.Color = color
+            ln.From = a
+            ln.To = b
+            ln.ZIndex = 50
+        end
+        local head = Vector2.new(cx, y1 + boxH * 0.08)
+        local neck = Vector2.new(cx, y1 + boxH * 0.18)
+        local pelvis = Vector2.new(cx, y1 + boxH * 0.55)
+        local lhand = Vector2.new(cx - boxW * 0.35, y1 + boxH * 0.40)
+        local rhand = Vector2.new(cx + boxW * 0.35, y1 + boxH * 0.40)
+        local lfoot = Vector2.new(cx - boxW * 0.22, y2 - 4)
+        local rfoot = Vector2.new(cx + boxW * 0.22, y2 - 4)
+        bone(head, neck)
+        bone(neck, pelvis)
+        bone(neck, lhand)
+        bone(neck, rhand)
+        bone(pelvis, lfoot)
+        bone(pelvis, rfoot)
+    end
+
+    -- Fallback UI preview if Drawing is unavailable
+    if Library._ESPPreviewFallback then
+        Library._ESPPreviewFallback.Visible = not useDrawing
+        if not useDrawing then
+            local f = Library._ESPPreviewFallback
+            f.Box.Visible = s.Box ~= false
+            f.NameLabel.Visible = s.Name ~= false
+            f.Health.Visible = s.Health ~= false
+            f.Tracer.Visible = s.Tracer ~= false
+            f.Box.BackgroundColor3 = color
+            f.NameLabel.TextColor3 = color
+            f.Tracer.BackgroundColor3 = color
+        end
+    end
+end
+
+function Library:CreateESPPreview(config)
+    config = config or {}
+    if Library._ESPPreviewPanel and Library._ESPPreviewPanel.Parent then
+        Library:SetESPPreviewVisible(true)
+        Library:_RefreshESPPreview()
+        return Library._ESPPreviewPanel
+    end
+
+    Library.ESPPreviewEnabled = true
+    if config.Settings then
+        Library:SetESPPreview(config.Settings)
+    end
+
+    local panel = Instance.new("Frame")
+    panel.Name = "ESPPreviewPanel"
+    panel.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
+    panel.BackgroundTransparency = 0.08
+    panel.BorderSizePixel = 0
+    panel.Size = config.Size or UDim2.new(0, 240, 0, 280)
+    panel.Position = config.Position or UDim2.new(1, -260, 0.2, 0)
+    panel.ZIndex = 255
+    panel.Active = true
+    panel.Visible = Library.ESPPreviewVisible
+    panel.Parent = ScreenGui
+
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+    local stroke = Instance.new("UIStroke", panel)
+    stroke.Color = Library.AccentColor
+    stroke.Thickness = 1.2
+    stroke.Transparency = 0.35
+
+    local header = Instance.new("Frame")
+    header.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+    header.BorderSizePixel = 0
+    header.Size = UDim2.new(1, 0, 0, 28)
+    header.ZIndex = 256
+    header.Parent = panel
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -60, 1, 0)
+    title.Position = UDim2.new(0, 10, 0, 0)
+    title.Font = Library.Font
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextColor3 = Library.AccentColor
+    title.Text = config.Title or "ESP Preview"
+    title.ZIndex = 257
+    title.Parent = header
+
+    local hideBtn = Instance.new("TextButton")
+    hideBtn.BackgroundTransparency = 1
+    hideBtn.Size = UDim2.new(0, 28, 1, 0)
+    hideBtn.Position = UDim2.new(1, -28, 0, 0)
+    hideBtn.Font = Library.Font
+    hideBtn.TextSize = 16
+    hideBtn.Text = "×"
+    hideBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    hideBtn.ZIndex = 258
+    hideBtn.Parent = header
+    hideBtn.MouseButton1Click:Connect(function()
+        Library:SetESPPreviewVisible(false)
+    end)
+
+    local viewport = Instance.new("Frame")
+    viewport.Name = "Viewport"
+    viewport.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
+    viewport.BorderSizePixel = 0
+    viewport.Position = UDim2.new(0, 10, 0, 36)
+    viewport.Size = UDim2.new(1, -20, 1, -78)
+    viewport.ClipsDescendants = true
+    viewport.ZIndex = 256
+    viewport.Parent = panel
+    Instance.new("UICorner", viewport).CornerRadius = UDim.new(0, 8)
+
+    local grid = Instance.new("TextLabel")
+    grid.BackgroundTransparency = 1
+    grid.Size = UDim2.new(1, 0, 1, 0)
+    grid.Font = Library.Font
+    grid.TextSize = 11
+    grid.TextColor3 = Color3.fromRGB(50, 55, 65)
+    grid.Text = "preview stage"
+    grid.ZIndex = 256
+    grid.Parent = viewport
+
+    -- Fallback UI figures (when Drawing API missing)
+    local fallbackBox = Instance.new("Frame")
+    fallbackBox.Name = "Box"
+    fallbackBox.BackgroundTransparency = 1
+    fallbackBox.BorderSizePixel = 0
+    fallbackBox.Size = UDim2.new(0.28, 0, 0.55, 0)
+    fallbackBox.Position = UDim2.new(0.36, 0, 0.28, 0)
+    fallbackBox.ZIndex = 257
+    fallbackBox.Parent = viewport
+    local fbStroke = Instance.new("UIStroke", fallbackBox)
+    fbStroke.Color = Library.AccentColor
+    fbStroke.Thickness = 1.5
+
+    local fallbackName = Instance.new("TextLabel")
+    fallbackName.Name = "NameLabel"
+    fallbackName.BackgroundTransparency = 1
+    fallbackName.Size = UDim2.new(1, 0, 0, 16)
+    fallbackName.Position = UDim2.new(0, 0, 0, -18)
+    fallbackName.Font = Library.Font
+    fallbackName.TextSize = 12
+    fallbackName.Text = "Player"
+    fallbackName.TextColor3 = Library.AccentColor
+    fallbackName.ZIndex = 258
+    fallbackName.Parent = fallbackBox
+
+    local fallbackHealth = Instance.new("Frame")
+    fallbackHealth.Name = "Health"
+    fallbackHealth.BackgroundColor3 = Color3.fromRGB(60, 220, 90)
+    fallbackHealth.BorderSizePixel = 0
+    fallbackHealth.Size = UDim2.new(0, 3, 0.72, 0)
+    fallbackHealth.Position = UDim2.new(0, -6, 0.28, 0)
+    fallbackHealth.ZIndex = 258
+    fallbackHealth.Parent = fallbackBox
+
+    local fallbackTracer = Instance.new("Frame")
+    fallbackTracer.Name = "Tracer"
+    fallbackTracer.BackgroundColor3 = Library.AccentColor
+    fallbackTracer.BorderSizePixel = 0
+    fallbackTracer.AnchorPoint = Vector2.new(0.5, 1)
+    fallbackTracer.Position = UDim2.new(0.5, 0, 1, -2)
+    fallbackTracer.Size = UDim2.new(0, 1, 0.22, 0)
+    fallbackTracer.Rotation = 0
+    fallbackTracer.ZIndex = 257
+    fallbackTracer.Parent = viewport
+
+    Library._ESPPreviewFallback = {
+        Box = fallbackBox,
+        NameLabel = fallbackName,
+        Health = fallbackHealth,
+        Tracer = fallbackTracer,
+        Visible = function(_, v)
+            fallbackBox.Visible = v
+            fallbackName.Visible = v
+            fallbackHealth.Visible = v
+            fallbackTracer.Visible = v
+        end,
+    }
+    -- allow .Visible = bool
+    setmetatable(Library._ESPPreviewFallback, {
+        __newindex = function(t, k, v)
+            if k == "Visible" then
+                fallbackBox.Visible = v
+                fallbackName.Visible = v
+                fallbackHealth.Visible = v
+                fallbackTracer.Visible = v
+            else
+                rawset(t, k, v)
+            end
+        end,
+        __index = function(t, k)
+            if k == "Visible" then return fallbackBox.Visible end
+            return rawget(t, k)
+        end,
+    })
+
+    local togglesRow = Instance.new("Frame")
+    togglesRow.BackgroundTransparency = 1
+    togglesRow.Position = UDim2.new(0, 8, 1, -36)
+    togglesRow.Size = UDim2.new(1, -16, 0, 28)
+    togglesRow.ZIndex = 256
+    togglesRow.Parent = panel
+
+    local function makeChip(text, key, order)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, 52, 0, 24)
+        b.Position = UDim2.new(0, (order - 1) * 56, 0, 2)
+        b.BackgroundColor3 = Color3.fromRGB(28, 30, 38)
+        b.BorderSizePixel = 0
+        b.Font = Library.Font
+        b.TextSize = 11
+        b.Text = text
+        b.TextColor3 = Color3.fromRGB(220, 220, 230)
+        b.ZIndex = 257
+        b.Parent = togglesRow
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+        local function paint()
+            local on = Library.ESPPreviewSettings[key]
+            b.BackgroundColor3 = on and Color3.fromRGB(0, 90, 160) or Color3.fromRGB(28, 30, 38)
+        end
+        paint()
+        b.MouseButton1Click:Connect(function()
+            Library.ESPPreviewSettings[key] = not Library.ESPPreviewSettings[key]
+            paint()
+            Library:_RefreshESPPreview()
+        end)
+    end
+    makeChip("Box", "Box", 1)
+    makeChip("Name", "Name", 2)
+    makeChip("HP", "Health", 3)
+    makeChip("Line", "Tracer", 4)
+
+    Library._ESPPreviewPanel = panel
+    Library._ESPPreviewViewport = viewport
+
+    pcall(function()
+        Library:MakeDraggable(panel, 28, false)
+    end)
+
+    -- Keep drawings aligned when panel moves / resizes
+    if not Library._ESPPreviewRenderBound then
+        Library._ESPPreviewRenderBound = true
+        Library:GiveSignal(RunService.RenderStepped:Connect(function()
+            if Library.ESPPreviewEnabled and Library.ESPPreviewVisible then
+                -- light refresh only if panel exists (Drawing positions are screen-space)
+                if Library._ESPPreviewPanel and Library._ESPPreviewPanel.Visible then
+                    -- throttle: update every few frames via counter
+                    Library._ESPPreviewFrame = (Library._ESPPreviewFrame or 0) + 1
+                    if Library._ESPPreviewFrame % 10 == 0 then
+                        Library:_RefreshESPPreview()
+                    end
+                end
+            end
+        end))
+    end
+
+    task.defer(function()
+        Library:_RefreshESPPreview()
+    end)
+
+    return panel
+end
+
+function Library:EnableESPPreview(config)
+    return Library:CreateESPPreview(config)
+end
+
+
+if getgenv().skip_getgenv_linoria ~= true then getgenv().Library = Library end
 return Library
