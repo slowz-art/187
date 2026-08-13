@@ -1,4 +1,3 @@
-
 local cloneref = (cloneref or clonereference or function(instance: any) return instance end)
 local InputService: UserInputService = cloneref(game:GetService('UserInputService'));
 local TextService: TextService = cloneref(game:GetService('TextService'));
@@ -128,7 +127,8 @@ local Library = {
     NotifySide = "Left";
     ShowCustomCursor = false; -- default off (no blue triangle cursor)
     ShowToggleFrameInKeybinds = true;
-    ShowKeybindHints = false; -- OPT-IN: Library.ShowKeybindHints = true in your script
+    ShowKeybindHints = false; -- OPT-IN: Library.ShowKeybindHints = true
+    FavoritesEnabled = false; -- OPT-IN: Library:EnableFavoritesSystem() or FavoritesEnabled = true BEFORE toggles
     Favorites = {};
     FavoritesPanelOpen = true;
     NotifyOnError = false; -- true = Library:Notify for SafeCallback (still warns in the developer console)
@@ -3559,10 +3559,13 @@ do
             end
 
             Library:UpdateDependencyBoxes();
-            pcall(function() if Library.RefreshFavoritesPanel then Library:RefreshFavoritesPanel() end end);
+            if Library.FavoritesEnabled then
+                pcall(function() if Library.RefreshFavoritesPanel then Library:RefreshFavoritesPanel() end end);
+            end
         end;
 
         function Toggle:SetFavorite(on)
+            if not Library.FavoritesEnabled then return end
             local idx = nil
             for k, v in pairs(Toggles) do
                 if v == Toggle then idx = k; break end
@@ -3646,29 +3649,12 @@ do
 
         Toggles[Idx] = Toggle;
 
-        -- Favorite pin (★) at the END of the toggle row (after text / addons)
-        pcall(function()
-            local Star = Instance.new('TextButton');
-            Star.Name = 'FavoriteStar';
-            Star.BackgroundTransparency = 1;
-            Star.Size = UDim2.new(0, 18, 0, 18);
-            Star.AnchorPoint = Vector2.new(1, 0.5);
-            Star.Position = UDim2.new(0, 248, 0.5, 0);
-            Star.Text = (Library.Favorites and Library.Favorites[Idx]) and '★' or '☆';
-            Star.TextColor3 = (Library.Favorites and Library.Favorites[Idx]) and Library.AccentColor or Library.DisabledTextColor;
-            Star.TextSize = 14;
-            Star.Font = Library.Font;
-            Star.ZIndex = 12;
-            Star.AutoButtonColor = false;
-            Star.Parent = ToggleOuter;
-            Toggle.FavoriteButton = Star;
-            Star.MouseButton1Click:Connect(function()
-                local fav = not (Library.Favorites and Library.Favorites[Idx]);
-                Toggle:SetFavorite(fav);
-                Star.Text = fav and '★' or '☆';
-                Star.TextColor3 = fav and Library.AccentColor or Library.DisabledTextColor;
-            end);
-        end);
+        -- Favorite star only if script opted in (Library.FavoritesEnabled / EnableFavoritesSystem)
+        if Library.FavoritesEnabled then
+            pcall(function()
+                Library:_AttachFavoriteStar(Toggle, Idx, ToggleLabel)
+            end)
+        end
 
         Library:UpdateDependencyBoxes();
 
@@ -8213,8 +8199,60 @@ function Library:ShowKeybindHint(featureName, key, mode)
     end)
 end
 
+-- ===================== FAVORITES (OPT-IN) =====================
+-- Enable in your script BEFORE creating toggles, or call EnableFavoritesSystem() after:
+--   Library.FavoritesEnabled = true
+--   Library:EnableFavoritesSystem()
+
+function Library:_AttachFavoriteStar(Toggle, Idx, ToggleLabel)
+    if not Library.FavoritesEnabled then return end
+    if not Toggle or Toggle.FavoriteButton then return end
+    if not ToggleLabel or not ToggleLabel.Parent then return end
+
+    -- Put star in the addon row (same row as keybind/color), LAST item = true end
+    local Star = Instance.new("TextButton")
+    Star.Name = "FavoriteStar"
+    Star.BackgroundTransparency = 1
+    Star.Size = UDim2.new(0, 16, 0, 16)
+    Star.AutomaticSize = Enum.AutomaticSize.None
+    Star.Text = (Library.Favorites and Library.Favorites[Idx]) and "★" or "☆"
+    Star.TextColor3 = (Library.Favorites and Library.Favorites[Idx]) and Library.AccentColor or Library.DisabledTextColor
+    Star.TextSize = 14
+    Star.Font = Library.Font
+    Star.ZIndex = 15
+    Star.AutoButtonColor = false
+    Star.LayoutOrder = 9999 -- after KeyPicker / ColorPicker in the horizontal list
+    Star.Parent = ToggleLabel
+
+    Toggle.FavoriteButton = Star
+    Star.MouseButton1Click:Connect(function()
+        local fav = not (Library.Favorites and Library.Favorites[Idx])
+        Toggle:SetFavorite(fav)
+        Star.Text = fav and "★" or "☆"
+        Star.TextColor3 = fav and Library.AccentColor or Library.DisabledTextColor
+    end)
+end
+
+function Library:EnableFavoritesSystem()
+    Library.FavoritesEnabled = true
+    Library.Favorites = Library.Favorites or {}
+    -- Attach stars to toggles already created
+    for idx, toggle in pairs(Toggles) do
+        if type(toggle) == "table" and toggle.TextLabel then
+            pcall(function()
+                Library:_AttachFavoriteStar(toggle, idx, toggle.TextLabel)
+            end)
+        end
+    end
+    pcall(function()
+        Library:EnsureFavoritesPanel()
+        Library:RefreshFavoritesPanel()
+    end)
+end
+
 -- ===================== FAVORITES OVERLAY (side screen, drag, close) =====================
 function Library:EnsureFavoritesPanel()
+    if not Library.FavoritesEnabled then return nil end
     if not ScreenGui then return nil end
     local panel = ScreenGui:FindFirstChild("FavoritesPanel")
     if panel then return panel end
@@ -8298,6 +8336,7 @@ function Library:EnsureFavoritesPanel()
 end
 
 function Library:OpenFavoritesPanel()
+    if not Library.FavoritesEnabled then return end
     Library.FavoritesPanelOpen = true
     local panel = Library:EnsureFavoritesPanel()
     if panel then
@@ -8307,6 +8346,7 @@ function Library:OpenFavoritesPanel()
 end
 
 function Library:RefreshFavoritesPanel()
+    if not Library.FavoritesEnabled then return end
     Library.Favorites = Library.Favorites or {}
     local panel = Library:EnsureFavoritesPanel()
     if not panel then return end
@@ -8413,8 +8453,10 @@ do
     Library.AttachOptionSearch = function(Window)
         if oldAttach then oldAttach(Window) end
         pcall(function()
-            Library:EnsureFavoritesPanel()
-            Library:RefreshFavoritesPanel()
+            if Library.FavoritesEnabled then
+                Library:EnsureFavoritesPanel()
+                Library:RefreshFavoritesPanel()
+            end
         end)
     end
 end
