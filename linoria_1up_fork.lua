@@ -5761,6 +5761,8 @@ function Library:CreateWindow(...)
         ZIndex = 1;
         Parent = Outer;
     });
+    Window.Outer = Outer;
+    Window.Inner = Inner;
 
     -- Add corner rounding to inner window
     Library:Create('UICorner', {
@@ -6036,6 +6038,7 @@ function Library:CreateWindow(...)
             ZIndex = 2;
             Parent = TabContentContainer;
         });
+        Tab.TabFrame = TabFrame;
 
         -- Top warning bar (same as original)
         local TopBar, TopBarInner, TopBarLabel, TopBarTextLabel, TopBarLabelStroke, TopBarHighlight; 
@@ -7313,6 +7316,16 @@ function Library:CreateWindow(...)
     Window.Holder = Outer;
 
     Library.Window = Window;
+
+    -- Attach option search after Library.AttachOptionSearch is defined (end of file)
+    task.defer(function()
+        pcall(function()
+            if type(Library.AttachOptionSearch) == "function" and Window.Inner then
+                Library.AttachOptionSearch(Window);
+            end;
+        end);
+    end);
+
     return Window;
 end;
 
@@ -7350,4 +7363,568 @@ Library:GiveSignal(Teams.ChildAdded:Connect(OnTeamChange));
 Library:GiveSignal(Teams.ChildRemoved:Connect(OnTeamChange));
 
 if getgenv().skip_getgenv_linoria ~= true then getgenv().Library = Library end
+-- =====================================================
+-- OPTION SEARCH + MULTI CONFIG PROFILES
+-- =====================================================
+
+Library.SearchIndex = Library.SearchIndex or {};
+Library.Windows = Library.Windows or {};
+
+local HttpService = game:GetService("HttpService");
+local TweenService = game:GetService("TweenService");
+
+local function safeIsfile(p)
+    local ok, r = pcall(function() return isfile(p) end);
+    return ok and r;
+end;
+local function safeWrite(p, data)
+    pcall(function() writefile(p, data) end);
+end;
+local function safeRead(p)
+    local ok, r = pcall(function() return readfile(p) end);
+    return ok and r or nil;
+end;
+local function safeList(folder)
+    local out = {};
+    pcall(function()
+        for _, file in ipairs(listfiles(folder)) do
+            out[#out + 1] = file;
+        end;
+    end);
+    return out;
+end;
+local function ensureFolder(folder)
+    pcall(function()
+        if not isfolder(folder) then makefolder(folder) end;
+    end);
+end;
+
+-- ----- Config serialize -----
+function Library:GetConfig()
+    local data = {
+        Toggles = {};
+        Options = {};
+        Version = 1;
+    };
+
+    for idx, toggle in pairs(Toggles) do
+        if type(idx) == "string" and toggle and toggle.Value ~= nil then
+            data.Toggles[idx] = toggle.Value and true or false;
+        end;
+    end;
+
+    for idx, option in pairs(Options) do
+        if type(idx) == "string" and option then
+            local t = option.Type;
+            if t == "ColorPicker" then
+                local c = option.Value or option.Color;
+                if typeof(c) == "Color3" then
+                    data.Options[idx] = {
+                        Type = "ColorPicker";
+                        R = c.R; G = c.G; B = c.B;
+                        Transparency = option.Transparency;
+                    };
+                end;
+            elseif t == "KeyPicker" then
+                data.Options[idx] = {
+                    Type = "KeyPicker";
+                    Key = option.Value or option.Key;
+                    Mode = option.Mode;
+                };
+            elseif option.Value ~= nil then
+                data.Options[idx] = {
+                    Type = t or "Value";
+                    Value = option.Value;
+                };
+            end;
+        end;
+    end;
+
+    local ok, encoded = pcall(function()
+        return HttpService:JSONEncode(data);
+    end);
+    return ok and encoded or "{}";
+end;
+
+function Library:LoadConfig(json)
+    if type(json) ~= "string" or json == "" then return end;
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(json);
+    end);
+    if not ok or type(data) ~= "table" then return end;
+
+    if type(data.Toggles) == "table" then
+        for idx, val in pairs(data.Toggles) do
+            local toggle = Toggles[idx];
+            if toggle and toggle.SetValue then
+                pcall(function() toggle:SetValue(val and true or false) end);
+            end;
+        end;
+    end;
+
+    if type(data.Options) == "table" then
+        for idx, entry in pairs(data.Options) do
+            local option = Options[idx];
+            if option and type(entry) == "table" then
+                pcall(function()
+                    if entry.Type == "ColorPicker" and option.SetValueRGB then
+                        option:SetValueRGB(Color3.new(entry.R or 1, entry.G or 1, entry.B or 1), entry.Transparency);
+                    elseif entry.Type == "ColorPicker" and option.SetValue then
+                        option:SetValue(Color3.new(entry.R or 1, entry.G or 1, entry.B or 1));
+                    elseif entry.Type == "KeyPicker" and option.SetValue then
+                        option:SetValue({ entry.Key, entry.Mode });
+                    elseif entry.Value ~= nil and option.SetValue then
+                        option:SetValue(entry.Value);
+                    end;
+                end);
+            end;
+        end;
+    end;
+end;
+
+-- ----- Multi-profile SaveManager -----
+local SaveManager = {};
+SaveManager.Library = Library;
+SaveManager.Folder = "ProjectX/configs";
+SaveManager.Ignore = {};
+SaveManager.CurrentProfile = "default";
+SaveManager.__index = SaveManager;
+
+function SaveManager:SetLibrary(Lib)
+    self.Library = Lib or Library;
+    Library.SaveManager = self;
+end;
+
+function SaveManager:SetFolder(Folder)
+    self.Folder = Folder or "ProjectX/configs";
+    ensureFolder(self.Folder);
+end;
+
+function SaveManager:IgnoreThemeSettings()
+    self.Ignore.Theme = true;
+end;
+
+function SaveManager:SetIgnoreIndexes(Indexes)
+    for _, idx in ipairs(Indexes or {}) do
+        self.Ignore[idx] = true;
+    end;
+end;
+
+function SaveManager:GetPath(Name)
+    return self.Folder .. "/" .. tostring(Name or self.CurrentProfile or "default") .. ".json";
+end;
+
+function SaveManager:Save(Name)
+    Name = Name or self.CurrentProfile or "default";
+    self.CurrentProfile = Name;
+    ensureFolder(self.Folder);
+    safeWrite(self:GetPath(Name), Library:GetConfig());
+    return true;
+end;
+
+function SaveManager:Load(Name)
+    Name = Name or self.CurrentProfile or "default";
+    local raw = safeRead(self:GetPath(Name));
+    if not raw then return false end;
+    self.CurrentProfile = Name;
+    Library:LoadConfig(raw);
+    return true;
+end;
+
+function SaveManager:Delete(Name)
+    Name = Name or self.CurrentProfile;
+    pcall(function()
+        local p = self:GetPath(Name);
+        if isfile(p) then delfile(p) end;
+    end);
+end;
+
+function SaveManager:RefreshConfigList()
+    ensureFolder(self.Folder);
+    local list = {};
+    for _, file in ipairs(safeList(self.Folder)) do
+        local name = file:match("([^/\\]+)%.json$");
+        if name and name ~= "autoload" then
+            list[#list + 1] = name;
+        end;
+    end;
+    table.sort(list);
+    return list;
+end;
+
+function SaveManager:SaveAutoloadConfig(Name)
+    ensureFolder(self.Folder);
+    safeWrite(self.Folder .. "/autoload.json", tostring(Name or self.CurrentProfile or "default"));
+end;
+
+function SaveManager:LoadAutoloadConfig()
+    local name = safeRead(self.Folder .. "/autoload.json");
+    if name and name ~= "" then
+        self:Load(name);
+    end;
+end;
+
+function SaveManager:BuildConfigSection(Tab)
+    if not Tab then return end;
+    local box = (Tab.AddLeftGroupbox and Tab:AddLeftGroupbox("Configs"))
+        or (Tab.AddRightGroupbox and Tab:AddRightGroupbox("Configs"));
+    if not box then return end;
+
+    local selected = self.CurrentProfile;
+    local nameBox = "";
+
+    local listDrop;
+    listDrop = box:AddDropdown("SM_ConfigList", {
+        Text = "Profile";
+        Values = self:RefreshConfigList();
+        Default = 1;
+        Callback = function(v)
+            selected = v;
+        end;
+    });
+
+    if box.AddInput then
+        box:AddInput("SM_ConfigName", {
+            Default = "";
+            Placeholder = "New profile name";
+            Finished = true;
+            Callback = function(v) nameBox = v end;
+        });
+    elseif box.AddTextbox then
+        box:AddTextbox("SM_ConfigName", {
+            Text = "New profile name";
+            Default = "";
+            Placeholder = "New profile name";
+            Callback = function(v) nameBox = v end;
+        });
+    end;
+
+    local function refreshDrop()
+        if listDrop and listDrop.SetValues then
+            listDrop:SetValues(self:RefreshConfigList());
+        end;
+    end;
+
+    box:AddButton({
+        Text = "Create / Save As";
+        Func = function()
+            local n = (nameBox and nameBox ~= "" and nameBox) or selected;
+            if n and n ~= "" then
+                self:Save(n);
+                refreshDrop();
+                Library:Notify("Saved profile: " .. tostring(n), 2);
+            end;
+        end;
+    });
+
+    box:AddButton({
+        Text = "Load Profile";
+        Func = function()
+            if selected then
+                self:Load(selected);
+                Library:Notify("Loaded: " .. tostring(selected), 2);
+            end;
+        end;
+    });
+
+    box:AddButton({
+        Text = "Overwrite Selected";
+        Func = function()
+            if selected then
+                self:Save(selected);
+                Library:Notify("Overwrote: " .. tostring(selected), 2);
+            end;
+        end;
+    });
+
+    box:AddButton({
+        Text = "Delete Profile";
+        Func = function()
+            if selected then
+                self:Delete(selected);
+                refreshDrop();
+                Library:Notify("Deleted: " .. tostring(selected), 2);
+            end;
+        end;
+    });
+
+    box:AddButton({
+        Text = "Set Autoload";
+        Func = function()
+            if selected then
+                self:SaveAutoloadConfig(selected);
+                Library:Notify("Autoload = " .. tostring(selected), 2);
+            end;
+        end;
+    });
+
+    box:AddButton({
+        Text = "Refresh List";
+        Func = function()
+            refreshDrop();
+        end;
+    });
+end;
+
+Library.SaveManager = SaveManager;
+pcall(function()
+    if getgenv then
+        getgenv().SaveManager = SaveManager;
+    end;
+end);
+
+-- ----- Option Search (Window-level) -----
+local function attachSearchToWindow(Window, Outer, Inner)
+    if not Window or not Inner then return end;
+    if Window._SearchAttached then return end;
+    Window._SearchAttached = true;
+
+    local SearchBox = Library:Create("TextBox", {
+        BackgroundColor3 = Library.MainColor;
+        BorderColor3 = Library.OutlineColor;
+        BorderMode = Enum.BorderMode.Inset;
+        Position = UDim2.new(1, -178, 0, 4);
+        Size = UDim2.new(0, 168, 0, 22);
+        Font = Library.Font;
+        PlaceholderText = "Search options...";
+        PlaceholderColor3 = Library.DisabledTextColor;
+        Text = "";
+        TextColor3 = Library.FontColor;
+        TextSize = 13;
+        TextXAlignment = Enum.TextXAlignment.Left;
+        ClearTextOnFocus = false;
+        ZIndex = 80;
+        Parent = Inner;
+    });
+
+    Library:Create("UICorner", {
+        CornerRadius = UDim.new(0, 4);
+        Parent = SearchBox;
+    });
+
+    Library:Create("UIPadding", {
+        PaddingLeft = UDim.new(0, 6);
+        Parent = SearchBox;
+    });
+
+    Library:AddToRegistry(SearchBox, {
+        BackgroundColor3 = "MainColor";
+        BorderColor3 = "OutlineColor";
+        TextColor3 = "FontColor";
+    });
+
+    local ResultsOuter = Library:Create("Frame", {
+        BackgroundColor3 = Library.BackgroundColor;
+        BorderColor3 = Library.OutlineColor;
+        BorderMode = Enum.BorderMode.Inset;
+        Position = UDim2.new(1, -220, 0, 30);
+        Size = UDim2.new(0, 210, 0, 0);
+        Visible = false;
+        ZIndex = 90;
+        Parent = Inner;
+    });
+
+    Library:Create("UICorner", {
+        CornerRadius = UDim.new(0, 6);
+        Parent = ResultsOuter;
+    });
+
+    Library:AddToRegistry(ResultsOuter, {
+        BackgroundColor3 = "BackgroundColor";
+        BorderColor3 = "OutlineColor";
+    });
+
+    local ResultsScroll = Library:Create("ScrollingFrame", {
+        BackgroundTransparency = 1;
+        BorderSizePixel = 0;
+        Size = UDim2.new(1, -4, 1, -4);
+        Position = UDim2.new(0, 2, 0, 2);
+        CanvasSize = UDim2.new(0, 0, 0, 0);
+        ScrollBarThickness = 3;
+        ScrollBarImageColor3 = Library.AccentColor;
+        ZIndex = 51;
+        Parent = ResultsOuter;
+    });
+
+    Library:Create("UIListLayout", {
+        Padding = UDim.new(0, 2);
+        SortOrder = Enum.SortOrder.LayoutOrder;
+        Parent = ResultsScroll;
+    });
+
+    local function clearResults()
+        for _, c in ipairs(ResultsScroll:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end;
+        end;
+    end;
+
+    local function collectResults(query)
+        query = string.lower(tostring(query or ""));
+        local results = {};
+
+        for idx, toggle in pairs(Toggles) do
+            if type(idx) == "string" and toggle then
+                local text = tostring(toggle.Text or toggle.OriginalText or idx);
+                if query == "" or text:lower():find(query, 1, true) or idx:lower():find(query, 1, true) then
+                    results[#results + 1] = {
+                        Text = text;
+                        Sub = "Toggle · " .. idx;
+                        Object = toggle;
+                        Kind = "Toggle";
+                    };
+                end;
+            end;
+        end;
+
+        for idx, option in pairs(Options) do
+            if type(idx) == "string" and option then
+                local text = tostring(option.Text or option.OriginalText or idx);
+                if query == "" or text:lower():find(query, 1, true) or idx:lower():find(query, 1, true) then
+                    results[#results + 1] = {
+                        Text = text;
+                        Sub = (option.Type or "Option") .. " · " .. idx;
+                        Object = option;
+                        Kind = "Option";
+                    };
+                end;
+            end;
+        end;
+
+        table.sort(results, function(a, b) return a.Text < b.Text end);
+        return results;
+    end;
+
+    local function jumpTo(entry)
+        if not entry or not entry.Object then return end;
+        local label = entry.Object.TextLabel;
+        if label and label.Parent then
+            for _, tab in ipairs(Window.Tabs or {}) do
+                if tab.TabFrame and label:IsDescendantOf(tab.TabFrame) then
+                    if tab.ShowTab then
+                        pcall(function() tab:ShowTab() end);
+                    elseif tab.Show then
+                        pcall(function() tab:Show() end);
+                    end;
+                    break;
+                end;
+            end;
+
+            -- brief highlight flash
+            local old = label.TextColor3;
+            pcall(function()
+                label.TextColor3 = Library.AccentColor;
+                task.delay(0.6, function()
+                    if label and label.Parent then
+                        label.TextColor3 = old;
+                    end;
+                end);
+            end);
+        end;
+
+        Library:Notify("Found: " .. tostring(entry.Text), 1.5);
+        ResultsOuter.Visible = false;
+        SearchBox.Text = "";
+    end;
+
+    local function showResults(query)
+        clearResults();
+        if not query or query == "" then
+            ResultsOuter.Visible = false;
+            ResultsOuter.Size = UDim2.new(0, 210, 0, 0);
+            return;
+        end;
+
+        local results = collectResults(query);
+        local maxShow = math.min(#results, 12);
+        for i = 1, maxShow do
+            local entry = results[i];
+            local btn = Library:Create("TextButton", {
+                BackgroundColor3 = Library.MainColor;
+                BorderSizePixel = 0;
+                Size = UDim2.new(1, -4, 0, 28);
+                Font = Library.Font;
+                Text = "  " .. entry.Text;
+                TextColor3 = Library.FontColor;
+                TextSize = 12;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                AutoButtonColor = false;
+                ZIndex = 52;
+                Parent = ResultsScroll;
+            });
+            Library:Create("UICorner", {
+                CornerRadius = UDim.new(0, 4);
+                Parent = btn;
+            });
+            local sub = Library:CreateLabel({
+                BackgroundTransparency = 1;
+                Position = UDim2.new(0, 8, 0, 15);
+                Size = UDim2.new(1, -12, 0, 12);
+                Text = entry.Sub;
+                TextSize = 10;
+                TextColor3 = Library.DisabledTextColor;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                ZIndex = 53;
+                Parent = btn;
+            });
+            btn.MouseButton1Click:Connect(function()
+                jumpTo(entry);
+            end);
+        end;
+
+        local h = math.clamp(maxShow * 30 + 6, 40, 220);
+        ResultsOuter.Size = UDim2.new(0, 210, 0, h);
+        ResultsScroll.CanvasSize = UDim2.new(0, 0, 0, maxShow * 30);
+        ResultsOuter.Visible = maxShow > 0;
+
+        if maxShow == 0 then
+            Library:Notify("No options matched", 1.2);
+        end;
+    end;
+
+    SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        showResults(SearchBox.Text);
+    end);
+
+    SearchBox.FocusLost:Connect(function()
+        task.delay(0.2, function()
+            if not SearchBox:IsFocused() then
+                -- keep results if user might click; hide shortly after
+            end;
+        end);
+    end);
+
+    -- Ctrl+F focus search
+    Library:GiveSignal(InputService.InputBegan:Connect(function(input, gp)
+        if gp then return end;
+        if input.KeyCode == Enum.KeyCode.F and InputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+            if Library.Toggled then
+                SearchBox:CaptureFocus();
+            end;
+        end;
+    end));
+
+    Window.SearchBox = SearchBox;
+end;
+
+function Library.AttachOptionSearch(Window)
+    if not Window then return end;
+    local Inner = Window.Inner;
+    local Outer = Window.Outer;
+    if not Inner then return end;
+    attachSearchToWindow(Window, Outer, Inner);
+    if Library.Windows then
+        table.insert(Library.Windows, Window);
+    end;
+end;
+
+-- Also try attach on any already-created window
+task.defer(function()
+    pcall(function()
+        if Library.Window and not Library.Window._SearchAttached then
+            Library.AttachOptionSearch(Library.Window);
+        end;
+    end);
+end);
+
+
 return Library
