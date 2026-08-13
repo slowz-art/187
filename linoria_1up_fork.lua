@@ -1,3 +1,4 @@
+
 local cloneref = (cloneref or clonereference or function(instance: any) return instance end)
 local InputService: UserInputService = cloneref(game:GetService('UserInputService'));
 local TextService: TextService = cloneref(game:GetService('TextService'));
@@ -127,8 +128,7 @@ local Library = {
     NotifySide = "Left";
     ShowCustomCursor = false; -- default off (no blue triangle cursor)
     ShowToggleFrameInKeybinds = true;
-    ShowKeybindHints = false; -- OPT-IN: scripts must enable (BuildUIExtrasSection or Library.ShowKeybindHints = true)
-    UITransparency = 0; -- 0 = solid; same amount applied to ALL panels/groupboxes
+    ShowKeybindHints = false; -- OPT-IN: Library.ShowKeybindHints = true in your script
     Favorites = {};
     FavoritesPanelOpen = true;
     NotifyOnError = false; -- true = Library:Notify for SafeCallback (still warns in the developer console)
@@ -3646,20 +3646,21 @@ do
 
         Toggles[Idx] = Toggle;
 
-        -- Favorite pin (★) — sits in the toggle addon row (right of label)
+        -- Favorite pin (★) at the END of the toggle row (after text / addons)
         pcall(function()
-            local Star = Library:Create('TextButton', {
-                BackgroundTransparency = 1;
-                Size = UDim2.new(0, 18, 0, 18);
-                Text = (Library.Favorites and Library.Favorites[Idx]) and '★' or '☆';
-                TextColor3 = (Library.Favorites and Library.Favorites[Idx]) and Library.AccentColor or Library.DisabledTextColor;
-                TextSize = 14;
-                Font = Library.Font;
-                ZIndex = 10;
-                AutoButtonColor = false;
-                LayoutOrder = -1;
-                Parent = ToggleLabel;
-            });
+            local Star = Instance.new('TextButton');
+            Star.Name = 'FavoriteStar';
+            Star.BackgroundTransparency = 1;
+            Star.Size = UDim2.new(0, 18, 0, 18);
+            Star.AnchorPoint = Vector2.new(1, 0.5);
+            Star.Position = UDim2.new(0, 248, 0.5, 0);
+            Star.Text = (Library.Favorites and Library.Favorites[Idx]) and '★' or '☆';
+            Star.TextColor3 = (Library.Favorites and Library.Favorites[Idx]) and Library.AccentColor or Library.DisabledTextColor;
+            Star.TextSize = 14;
+            Star.Font = Library.Font;
+            Star.ZIndex = 12;
+            Star.AutoButtonColor = false;
+            Star.Parent = ToggleOuter;
             Toggle.FavoriteButton = Star;
             Star.MouseButton1Click:Connect(function()
                 local fav = not (Library.Favorites and Library.Favorites[Idx]);
@@ -7832,66 +7833,8 @@ local SaveManager = {} do
             end
         end)
 
-        section:AddDivider()
-
-        section:AddButton("Export config (clipboard)", function()
-            local name = self.Library.Options.SaveManager_ConfigList.Value
-            local payload
-            if name and name ~= "" then
-                local file = self.Folder .. "/settings/" .. name .. ".json"
-                if self:CheckSubFolder(true) then
-                    file = self.Folder .. "/settings/" .. self.SubFolder .. "/" .. name .. ".json"
-                end
-                payload = sm_readfile(file)
-            end
-            if not payload or payload == "" then
-                payload = self.Library:GetConfig()
-            end
-            local ok = pcall(function() setclipboard(tostring(payload)) end)
-            if ok then
-                self.Library:Notify("Config exported to clipboard", 2)
-            else
-                self.Library:Notify("setclipboard failed", 2)
-            end
-        end)
-
-        section:AddInput("SaveManager_ImportBox", {
-            Text = "Import config string",
-            Default = "",
-            Placeholder = "Paste config JSON here...",
-            Finished = true,
-            Callback = function() end,
-        })
-
-        section:AddButton("Import config (from box)", function()
-            local raw = self.Library.Options.SaveManager_ImportBox and self.Library.Options.SaveManager_ImportBox.Value
-            if not raw or tostring(raw):gsub("%s", "") == "" then
-                self.Library:Notify("Paste a config into Import box first", 2)
-                return
-            end
-            local okDecode = pcall(function()
-                HttpService:JSONDecode(tostring(raw))
-            end)
-            if not okDecode then
-                self.Library:Notify("Invalid JSON config", 2)
-                return
-            end
-            -- If it looks like Linoria objects format, load via parser path
-            local success, decoded = pcall(HttpService.JSONDecode, HttpService, tostring(raw))
-            if success and type(decoded) == "table" and decoded.objects then
-                for _, option in ipairs(decoded.objects) do
-                    if option.type and self.Parser[option.type] and not self.Ignore[option.idx] then
-                        task.spawn(self.Parser[option.type].Load, option.idx, option)
-                    end
-                end
-            else
-                self.Library:LoadConfig(tostring(raw))
-            end
-            self.Library:Notify("Config imported", 2)
-        end)
-
         self.AutoloadConfigLabel = section:AddLabel("Current autoload config: " .. self:GetAutoloadConfig(), true)
-        self:SetIgnoreIndexes({ "SaveManager_ConfigList", "SaveManager_ConfigName", "SaveManager_ImportBox" })
+        self:SetIgnoreIndexes({ "SaveManager_ConfigList", "SaveManager_ConfigName" })
     end
 end
 
@@ -8198,72 +8141,14 @@ task.defer(function()
     end)
 end)
 
--- ===================== UNIFORM TRANSPARENCY (all panels same) =====================
-Library._TransOrig = Library._TransOrig or setmetatable({}, { __mode = "k" })
-
-function Library:SetUITransparency(amount)
-    amount = math.clamp(tonumber(amount) or 0, 0, 0.6)
-    Library.UITransparency = amount
-
-    local Window = Library.Window
-    if not Window or not Window.Outer then return end
-
-    local skip = {
-        OptionSearch = true;
-        SearchResults = true;
-        FavoritesPanel = true;
-        KeybindHint = true;
-    }
-
-    local function shouldSkip(inst)
-        if skip[inst.Name] then return true end
-        if inst:IsA("TextLabel") or inst:IsA("TextBox") or inst:IsA("ImageLabel") then return true end
-        if inst:IsA("ScrollingFrame") then return true end -- keep scroll areas readable
-        -- fully invisible utility frames stay invisible
-        local orig = Library._TransOrig[inst]
-        if orig == nil then
-            Library._TransOrig[inst] = inst.BackgroundTransparency
-            orig = inst.BackgroundTransparency
-        end
-        if orig >= 0.95 then return true end
-        return false
-    end
-
-    local function paint(inst)
-        if not inst:IsA("Frame") and not inst:IsA("TextButton") then return end
-        if shouldSkip(inst) then return end
-        -- EVERY solid panel gets the SAME transparency amount
-        inst.BackgroundTransparency = amount
-    end
-
-    pcall(function()
-        paint(Window.Outer)
-        paint(Window.Inner)
-        for _, d in ipairs(Window.Outer:GetDescendants()) do
-            paint(d)
-        end
-    end)
-
-    -- keep favorites panel matched
-    pcall(function()
-        local fp = ScreenGui and ScreenGui:FindFirstChild("FavoritesPanel")
-        if fp then fp.BackgroundTransparency = math.clamp(amount + 0.05, 0, 0.7) end
-    end)
-end
-
-function Library:SetTransparent(enabled)
-    Library:SetUITransparency(enabled and 0.32 or 0)
-end
-
 -- ===================== KEYBIND SHOWER (OPT-IN, PC) =====================
--- Default OFF. Scripts enable with:
+-- Default OFF. Enable in your script:
 --   Library.ShowKeybindHints = true
--- or Library:BuildUIExtrasSection(SettingsTab) and turn the toggle on.
--- API: Library:ShowKeybindHint("Aimbot", "MB2", "Hold")
+-- Manual: Library:ShowKeybindHint("Aimbot", "MB2", "Hold")
 
 function Library:ShowKeybindHint(featureName, key, mode)
     if Library.IsMobile then return end
-    if Library.ShowKeybindHints ~= true then return end -- must be explicitly true
+    if Library.ShowKeybindHints ~= true then return end
 
     featureName = tostring(featureName or "Feature")
     key = tostring(key or "None")
@@ -8279,7 +8164,6 @@ function Library:ShowKeybindHint(featureName, key, mode)
     local parent = ScreenGui
     if not parent then return end
 
-    -- remove old toast
     local old = parent:FindFirstChild("KeybindHint")
     if old then old:Destroy() end
 
@@ -8329,7 +8213,7 @@ function Library:ShowKeybindHint(featureName, key, mode)
     end)
 end
 
--- ===================== FAVORITES OVERLAY (side of screen, drag, close) =====================
+-- ===================== FAVORITES OVERLAY (side screen, drag, close) =====================
 function Library:EnsureFavoritesPanel()
     if not ScreenGui then return nil end
     local panel = ScreenGui:FindFirstChild("FavoritesPanel")
@@ -8338,10 +8222,10 @@ function Library:EnsureFavoritesPanel()
     panel = Instance.new("Frame")
     panel.Name = "FavoritesPanel"
     panel.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
-    panel.BackgroundTransparency = math.clamp((Library.UITransparency or 0) + 0.05, 0, 0.7)
+    panel.BackgroundTransparency = 0.05
     panel.BorderSizePixel = 0
     panel.Size = UDim2.new(0, 220, 0, 180)
-    panel.Position = UDim2.new(1, -240, 0.35, 0) -- right side of screen
+    panel.Position = UDim2.new(1, -240, 0.35, 0)
     panel.ZIndex = 250
     panel.Visible = false
     panel.Active = true
@@ -8352,11 +8236,9 @@ function Library:EnsureFavoritesPanel()
     stroke.Color = Library.AccentColor
     stroke.Thickness = 1.2
 
-    -- header (drag handle)
     local header = Instance.new("Frame")
     header.Name = "Header"
     header.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
-    header.BackgroundTransparency = 0.15
     header.BorderSizePixel = 0
     header.Size = UDim2.new(1, 0, 0, 28)
     header.ZIndex = 251
@@ -8408,7 +8290,6 @@ function Library:EnsureFavoritesPanel()
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Parent = scroll
 
-    -- drag from header
     pcall(function()
         Library:MakeDraggable(panel, 28, false)
     end)
@@ -8448,14 +8329,12 @@ function Library:RefreshFavoritesPanel()
 
             local row = Instance.new("Frame")
             row.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
-            row.BackgroundTransparency = 0.1
             row.BorderSizePixel = 0
             row.Size = UDim2.new(1, 0, 0, 30)
             row.ZIndex = 252
             row.Parent = scroll
             Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
 
-            -- mini toggle switch (left)
             local sw = Instance.new("Frame")
             sw.Size = UDim2.new(0, 28, 0, 16)
             sw.Position = UDim2.new(0, 8, 0.5, -8)
@@ -8487,7 +8366,6 @@ function Library:RefreshFavoritesPanel()
             name.ZIndex = 253
             name.Parent = row
 
-            -- star at END of row
             local star = Instance.new("TextButton")
             star.BackgroundTransparency = 1
             star.Size = UDim2.new(0, 24, 1, 0)
@@ -8506,7 +8384,6 @@ function Library:RefreshFavoritesPanel()
                 end
             end)
 
-            -- click row / switch toggles feature
             local hit = Instance.new("TextButton")
             hit.BackgroundTransparency = 1
             hit.Size = UDim2.new(1, -28, 1, 0)
@@ -8524,7 +8401,6 @@ function Library:RefreshFavoritesPanel()
     scroll.CanvasSize = UDim2.new(0, 0, 0, count * 34)
     panel.Size = UDim2.new(0, 220, 0, math.clamp(40 + count * 34, 80, 280))
 
-    -- only show if open + has pins
     if Library.FavoritesPanelOpen == false then
         panel.Visible = false
     else
@@ -8532,63 +8408,15 @@ function Library:RefreshFavoritesPanel()
     end
 end
 
--- Hook window attach: transparency + favorites
 do
     local oldAttach = Library.AttachOptionSearch
     Library.AttachOptionSearch = function(Window)
         if oldAttach then oldAttach(Window) end
         pcall(function()
-            if Library.UITransparency and Library.UITransparency > 0 then
-                Library:SetUITransparency(Library.UITransparency)
-            end
             Library:EnsureFavoritesPanel()
             Library:RefreshFavoritesPanel()
         end)
     end
-end
-
--- Settings helpers (scripts opt-in by calling this)
-function Library:BuildUIExtrasSection(tab)
-    if not tab then return end
-    local box = tab:AddLeftGroupbox("UI Extras")
-
-    box:AddToggle("UI_Transparent", {
-        Text = "Transparent UI",
-        Default = (Library.UITransparency or 0) > 0.05,
-        Callback = function(v)
-            Library:SetTransparent(v)
-        end,
-    })
-
-    box:AddSlider("UI_TransparencyAmount", {
-        Text = "Transparency Amount",
-        Default = math.floor(((Library.UITransparency > 0) and Library.UITransparency or 0.32) * 100),
-        Min = 10,
-        Max = 55,
-        Rounding = 0,
-        Callback = function(v)
-            Library:SetUITransparency((tonumber(v) or 32) / 100)
-        end,
-    })
-
-    box:AddDivider()
-
-    box:AddToggle("UI_KeybindHints", {
-        Text = "Keybind Shower (PC)",
-        Default = false, -- always opt-in
-        Callback = function(v)
-            Library.ShowKeybindHints = v and true or false
-        end,
-    })
-
-    box:AddButton({
-        Text = "Open Favorites Panel",
-        Func = function()
-            Library:OpenFavoritesPanel()
-        end,
-    })
-
-    box:AddLabel("☆ on toggles = pin  |  ★ on panel = unpin")
 end
 
 return Library
