@@ -3612,6 +3612,397 @@ do
         return Toggle;
     end;
 
+    -- ========================= ESP PREVIEW (1up-style) =========================
+    function BaseGroupboxFuncs:AddESPPreview(Name)
+        local Groupbox = self;
+        local Container = Groupbox.Container;
+        Name = typeof(Name) == "string" and Name or "ESP Preview";
+
+        local Preview = {
+            ESP = {
+                Enabled = false;
+                Box = false;
+                Corner = false;
+                Names = false;
+                Health = false;
+                HealthText = false;
+                Distance = false;
+                Chams = false;
+                Skeleton = false;
+                Rainbow = false;
+                Weapons = false;
+                Flags = false;
+                TeamCheck = false;
+            };
+            _ChamsCache = {};
+        };
+
+        local Holder = Library:Create('Frame', {
+            BackgroundColor3 = Library.MainColor;
+            BorderColor3 = Library.OutlineColor;
+            BorderMode = Enum.BorderMode.Inset;
+            Size = UDim2.new(1, -4, 0, 220);
+            ZIndex = 4;
+            Parent = Container;
+        });
+
+        Library:Create('UICorner', {
+            CornerRadius = UDim.new(0, 6);
+            Parent = Holder;
+        });
+
+        Library:AddToRegistry(Holder, {
+            BackgroundColor3 = 'MainColor';
+            BorderColor3 = 'OutlineColor';
+        });
+
+        Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Position = UDim2.new(0, 8, 0, 4);
+            Size = UDim2.new(1, -16, 0, 16);
+            Text = Name;
+            TextSize = 13;
+            TextXAlignment = Enum.TextXAlignment.Left;
+            TextTransparency = 0.25;
+            ZIndex = 5;
+            Parent = Holder;
+        });
+
+        local Bg = Library:Create('Frame', {
+            BackgroundColor3 = Color3.fromRGB(18, 18, 22);
+            BorderSizePixel = 0;
+            Position = UDim2.new(0, 6, 0, 24);
+            Size = UDim2.new(1, -12, 1, -30);
+            ZIndex = 5;
+            Parent = Holder;
+        });
+        Library:Create('UICorner', {
+            CornerRadius = UDim.new(0, 5);
+            Parent = Bg;
+        });
+
+        local Viewport = Library:Create('ViewportFrame', {
+            BackgroundTransparency = 1;
+            Size = UDim2.fromScale(1, 1);
+            ZIndex = 5;
+            BorderSizePixel = 0;
+            Parent = Bg;
+        });
+
+        local Overlay = Library:Create('Frame', {
+            BackgroundTransparency = 1;
+            Size = UDim2.fromScale(1, 1);
+            ZIndex = 50;
+            BorderSizePixel = 0;
+            Parent = Bg;
+        });
+
+        -- Full box
+        local BoxFrame = Library:Create('Frame', {
+            BackgroundTransparency = 1;
+            BorderSizePixel = 0;
+            Size = UDim2.new(0.42, 0, 0.72, 0);
+            Position = UDim2.new(0.29, 0, 0.14, 0);
+            Visible = false;
+            ZIndex = 6;
+            Parent = Overlay;
+        });
+        local BoxStroke = Library:Create('UIStroke', {
+            Color = Color3.fromRGB(255, 255, 255);
+            Thickness = 2;
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border;
+            Parent = BoxFrame;
+        });
+
+        -- Corner box
+        local Corners = Library:Create('Frame', {
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0.42, 0, 0.72, 0);
+            Position = UDim2.new(0.29, 0, 0.14, 0);
+            Visible = false;
+            ZIndex = 6;
+            Parent = Overlay;
+        });
+        local cornersSpec = {
+            {0, 0, 0.3, 0.015, 0, 0}; {0, 0, 0.015, 0.22, 0, 0};
+            {1, 0, 0.3, 0.015, 1, 0}; {1, 0, 0.015, 0.22, 1, 0};
+            {0, 1, 0.3, 0.015, 0, 1}; {0, 1, 0.015, 0.22, 0, 1};
+            {1, 1, 0.3, 0.015, 1, 1}; {1, 1, 0.015, 0.22, 1, 1};
+        };
+        for _, s in ipairs(cornersSpec) do
+            Library:Create('Frame', {
+                BackgroundColor3 = Color3.fromRGB(255, 255, 255);
+                BorderSizePixel = 0;
+                Position = UDim2.new(s[1], 0, s[2], 0);
+                Size = UDim2.new(s[3], 0, s[4], 0);
+                AnchorPoint = Vector2.new(s[5], s[6]);
+                ZIndex = 6;
+                Parent = Corners;
+            });
+        end;
+
+        local NameLabel = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(1, 0, 0, 16);
+            Position = UDim2.new(0, 0, 0, 4);
+            Text = (LocalPlayer and LocalPlayer.Name) or 'Player';
+            TextSize = 12;
+            TextXAlignment = Enum.TextXAlignment.Center;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        local DistLabel = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(1, 0, 0, 14);
+            Position = UDim2.new(0, 0, 1, -18);
+            Text = '12m';
+            TextSize = 11;
+            TextColor3 = Color3.fromRGB(200, 200, 200);
+            TextXAlignment = Enum.TextXAlignment.Center;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        local HealthBarBg = Library:Create('Frame', {
+            BackgroundColor3 = Color3.fromRGB(20, 20, 20);
+            BorderSizePixel = 0;
+            Size = UDim2.new(0, 4, 0.72, 0);
+            Position = UDim2.new(0.29, -8, 0.14, 0);
+            Visible = false;
+            ZIndex = 6;
+            Parent = Overlay;
+        });
+        Library:Create('Frame', {
+            BackgroundColor3 = Color3.fromRGB(80, 255, 80);
+            BorderSizePixel = 0;
+            Size = UDim2.new(1, 0, 0.75, 0);
+            Position = UDim2.new(0, 0, 0.25, 0);
+            ZIndex = 7;
+            Parent = HealthBarBg;
+        });
+
+        local HealthText = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0, 30, 0, 12);
+            Position = UDim2.new(0.29, -34, 0.14, 0);
+            Text = '100';
+            TextSize = 10;
+            TextColor3 = Color3.fromRGB(80, 255, 80);
+            TextXAlignment = Enum.TextXAlignment.Right;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        -- Skeleton stick figure
+        local SkelFrame = Library:Create('Frame', {
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0.42, 0, 0.72, 0);
+            Position = UDim2.new(0.29, 0, 0.14, 0);
+            Visible = false;
+            ZIndex = 52;
+            Parent = Overlay;
+        });
+        local function skLine(x0, y0, x1, y1, thick)
+            local dx, dy = x1 - x0, y1 - y0;
+            local len = math.sqrt(dx * dx + dy * dy);
+            local midX, midY = (x0 + x1) / 2, (y0 + y1) / 2;
+            local angle = math.deg(math.atan2(dy, dx));
+            return Library:Create('Frame', {
+                BackgroundColor3 = Color3.fromRGB(255, 255, 255);
+                BorderSizePixel = 0;
+                AnchorPoint = Vector2.new(0.5, 0.5);
+                Position = UDim2.new(midX, 0, midY, 0);
+                Size = UDim2.new(len, 0, 0, thick or 2);
+                Rotation = angle;
+                ZIndex = 52;
+                Parent = SkelFrame;
+            });
+        end;
+        local joints = {
+            {0.5, 0.08, 0.5, 0.18};
+            {0.5, 0.18, 0.5, 0.28};
+            {0.5, 0.28, 0.5, 0.55};
+            {0.5, 0.30, 0.22, 0.32};
+            {0.22, 0.32, 0.12, 0.48};
+            {0.5, 0.30, 0.78, 0.32};
+            {0.78, 0.32, 0.88, 0.48};
+            {0.5, 0.55, 0.38, 0.58};
+            {0.38, 0.58, 0.34, 0.88};
+            {0.5, 0.55, 0.62, 0.58};
+            {0.62, 0.58, 0.66, 0.88};
+        };
+        for _, L in ipairs(joints) do
+            skLine(L[1], L[2], L[3], L[4], 2);
+        end;
+
+        local WeaponLabel = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(1, 0, 0, 14);
+            Position = UDim2.new(0, 0, 1, -34);
+            Text = 'AK-47';
+            TextSize = 11;
+            TextColor3 = Color3.fromRGB(0, 200, 200);
+            TextXAlignment = Enum.TextXAlignment.Center;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        local FlagLabel = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0, 24, 0, 40);
+            Position = UDim2.new(0.71, 4, 0.14, 0);
+            Text = 'F\nW';
+            TextSize = 10;
+            TextXAlignment = Enum.TextXAlignment.Left;
+            TextYAlignment = Enum.TextYAlignment.Top;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        local TeamBadge = Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Size = UDim2.new(0, 40, 0, 14);
+            Position = UDim2.new(0, 6, 0, 4);
+            Text = 'TEAM';
+            TextSize = 10;
+            TextColor3 = Color3.fromRGB(80, 255, 120);
+            TextXAlignment = Enum.TextXAlignment.Left;
+            Visible = false;
+            ZIndex = 7;
+            Parent = Overlay;
+        });
+
+        local function applyColor(col)
+            BoxStroke.Color = col;
+            for _, c in ipairs(Corners:GetChildren()) do
+                if c:IsA('Frame') then c.BackgroundColor3 = col end;
+            end;
+            for _, c in ipairs(SkelFrame:GetChildren()) do
+                if c:IsA('Frame') then c.BackgroundColor3 = col end;
+            end;
+            NameLabel.TextColor3 = col;
+        end;
+
+        function Preview:RefreshESPOverlay()
+            local E = Preview.ESP or {};
+            local show = E.Enabled == true;
+
+            BoxFrame.Visible = show and E.Box == true;
+            Corners.Visible = show and E.Corner == true;
+            NameLabel.Visible = show and E.Names == true;
+            DistLabel.Visible = show and E.Distance == true;
+            HealthBarBg.Visible = show and E.Health == true;
+            HealthText.Visible = show and E.HealthText == true;
+            SkelFrame.Visible = show and E.Skeleton == true;
+            WeaponLabel.Visible = show and E.Weapons == true;
+            FlagLabel.Visible = show and E.Flags == true;
+            TeamBadge.Visible = show and E.TeamCheck == true;
+
+            if show and E.Weapons and E.Distance then
+                DistLabel.Position = UDim2.new(0, 0, 1, -18);
+                WeaponLabel.Position = UDim2.new(0, 0, 1, -34);
+            elseif show and E.Weapons then
+                WeaponLabel.Position = UDim2.new(0, 0, 1, -18);
+            elseif show and E.Distance then
+                DistLabel.Position = UDim2.new(0, 0, 1, -18);
+            end;
+
+            -- Chams: ViewportFrame ignores Highlight — tint BaseParts
+            local model = Preview._Viewmodel;
+            Preview._ChamsCache = Preview._ChamsCache or {};
+            if model then
+                if show and E.Chams then
+                    local fill = E.Rainbow and Color3.fromHSV((tick() * 0.5) % 1, 1, 1) or (Library.AccentColor or Color3.fromRGB(0, 116, 224));
+                    for _, part in ipairs(model:GetDescendants()) do
+                        if part:IsA('BasePart') then
+                            if not Preview._ChamsCache[part] then
+                                Preview._ChamsCache[part] = {
+                                    Color = part.Color;
+                                    Material = part.Material;
+                                    Transparency = part.Transparency;
+                                };
+                            end;
+                            part.Color = fill;
+                            part.Material = Enum.Material.ForceField;
+                            part.Transparency = 0.35;
+                        end;
+                    end;
+                else
+                    for part, props in pairs(Preview._ChamsCache) do
+                        if part and part.Parent then
+                            part.Color = props.Color;
+                            part.Material = props.Material;
+                            part.Transparency = props.Transparency;
+                        end;
+                    end;
+                    Preview._ChamsCache = {};
+                end;
+            end;
+
+            local col = Color3.fromRGB(255, 255, 255);
+            if show and E.Rainbow then
+                col = Color3.fromHSV((tick() * 0.5) % 1, 1, 1);
+            end;
+            applyColor(col);
+            if show and E.Rainbow then
+                DistLabel.TextColor3 = col;
+                WeaponLabel.TextColor3 = col;
+                FlagLabel.TextColor3 = col;
+            else
+                DistLabel.TextColor3 = Color3.fromRGB(200, 200, 200);
+                WeaponLabel.TextColor3 = Color3.fromRGB(0, 200, 200);
+                FlagLabel.TextColor3 = Color3.fromRGB(255, 255, 255);
+            end;
+        end;
+
+        function Preview:SetESP(Key, Value)
+            Preview.ESP = Preview.ESP or {
+                Enabled = false; Box = false; Corner = false; Names = false;
+                Health = false; HealthText = false; Distance = false;
+                Chams = false; Skeleton = false; Rainbow = false;
+                Weapons = false; Flags = false; TeamCheck = false;
+            };
+
+            local payload = Key;
+            if type(Key) == 'string' then
+                payload = { [Key] = Value };
+            end;
+            if type(payload) ~= 'table' then return end;
+
+            local aliases = {
+                Boxes = 'Box'; Bounding = 'Box'; Full = 'Box';
+                BoxCorner = 'Corner'; Corners = 'Corner'; CornerBox = 'Corner';
+                Name = 'Names'; PlayerNames = 'Names';
+                Healthbar = 'Health'; HealthBar = 'Health';
+                Dist = 'Distance'; Distances = 'Distance';
+                Cham = 'Chams'; Highlight = 'Chams';
+                Skel = 'Skeleton'; Bones = 'Skeleton';
+                Master = 'Enabled'; Enable = 'Enabled';
+                Weapon = 'Weapons'; WeaponText = 'Weapons';
+                Flag = 'Flags'; Inventory = 'Flags';
+                Team = 'TeamCheck'; Teams = 'TeamCheck';
+            };
+
+            for k, v in pairs(payload) do
+                local key = aliases[k] or k;
+                if Preview.ESP[key] ~= nil then
+                    Preview.ESP[key] = not not v;
+                end;
+            end;
+
+            Preview:RefreshESPOverlay();
+        end;
+
+        function Preview:Update(payload)
+            return Preview:SetESP(payload);
+        end;
+
     function BaseGroupboxFuncs:AddSlider(Idx, Info)
         assert(Info.Default, 'AddSlider: Missing default value.');
         assert(Info.Text, 'AddSlider: Missing slider text.');
@@ -5821,6 +6212,376 @@ function Library:CreateWindow(...)
             return Tab:AddGroupbox({ Side = 2; Name = Name; });
         end;
 
+                -- ========================= GLOBAL CHAT (1up feature — full) =========================
+        -- Usage: local Chat = Tab:GlobalChat(1) -- side 1 left, 2 right
+        function Tab:GlobalChat(Side)
+            Side = (Side == 2) and 2 or 1;
+
+            local ChatAPI = {
+                _onSend = nil;
+                _statusText = 'Online';
+                _statusColor = Color3.fromRGB(62, 255, 91);
+                _messages = {};
+                _maxMessages = 80;
+                _showTimestamps = false;
+            };
+
+            local chatH = Library.IsMobile and 360 or 320;
+
+            local BoxOuter = Library:Create('Frame', {
+                BackgroundColor3 = Library.BackgroundColor;
+                BorderColor3 = Library.OutlineColor;
+                BorderMode = Enum.BorderMode.Inset;
+                Size = UDim2.new(1, 0, 0, chatH);
+                ZIndex = 2;
+                Parent = Side == 1 and LeftSide or RightSide;
+            });
+
+            Library:Create('UICorner', {
+                CornerRadius = UDim.new(0, 8);
+                Parent = BoxOuter;
+            });
+
+            Library:AddToRegistry(BoxOuter, {
+                BackgroundColor3 = 'BackgroundColor';
+                BorderColor3 = 'OutlineColor';
+            });
+
+            local BoxInner = Library:Create('Frame', {
+                BackgroundColor3 = Library.BackgroundColor;
+                BorderColor3 = Color3.new(0, 0, 0);
+                Size = UDim2.new(1, -2, 1, -2);
+                Position = UDim2.new(0, 1, 0, 1);
+                ZIndex = 4;
+                Parent = BoxOuter;
+            });
+
+            Library:Create('UICorner', {
+                CornerRadius = UDim.new(0, 8);
+                Parent = BoxInner;
+            });
+
+            Library:AddToRegistry(BoxInner, {
+                BackgroundColor3 = 'BackgroundColor';
+            });
+
+            local Highlight = Library:Create('Frame', {
+                BackgroundColor3 = Library.AccentColor;
+                BorderSizePixel = 0;
+                Size = UDim2.new(1, 0, 0, 2);
+                ZIndex = 10;
+                Parent = BoxInner;
+            });
+            Library:AddToRegistry(Highlight, { BackgroundColor3 = 'AccentColor' });
+
+            local Header = Library:Create('Frame', {
+                BackgroundTransparency = 1;
+                Position = UDim2.new(0, 6, 0, 6);
+                Size = UDim2.new(1, -12, 0, 20);
+                ZIndex = 5;
+                Parent = BoxInner;
+            });
+
+            local TitleLabel = Library:CreateLabel({
+                Size = UDim2.new(0.5, 0, 1, 0);
+                Text = 'Global Chat';
+                TextSize = 14;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                ZIndex = 6;
+                Parent = Header;
+            });
+
+            local StatusDot = Library:Create('Frame', {
+                BackgroundColor3 = ChatAPI._statusColor;
+                BorderSizePixel = 0;
+                Position = UDim2.new(1, -78, 0.5, -4);
+                Size = UDim2.new(0, 8, 0, 8);
+                ZIndex = 6;
+                Parent = Header;
+            });
+            Library:Create('UICorner', {
+                CornerRadius = UDim.new(1, 0);
+                Parent = StatusDot;
+            });
+
+            local StatusLabel = Library:CreateLabel({
+                Position = UDim2.new(1, -66, 0, 0);
+                Size = UDim2.new(0, 66, 1, 0);
+                Text = ChatAPI._statusText;
+                TextSize = 12;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                ZIndex = 6;
+                Parent = Header;
+            });
+
+            local Scroll = Library:Create('ScrollingFrame', {
+                BackgroundColor3 = Library.MainColor;
+                BorderColor3 = Library.OutlineColor;
+                BorderMode = Enum.BorderMode.Inset;
+                Position = UDim2.new(0, 6, 0, 30);
+                Size = UDim2.new(1, -12, 1, -72);
+                CanvasSize = UDim2.new(0, 0, 0, 0);
+                ScrollBarThickness = 3;
+                ScrollBarImageColor3 = Library.AccentColor;
+                AutomaticCanvasSize = Enum.AutomaticSize.Y;
+                ZIndex = 5;
+                Parent = BoxInner;
+            });
+
+            Library:Create('UICorner', {
+                CornerRadius = UDim.new(0, 6);
+                Parent = Scroll;
+            });
+
+            Library:AddToRegistry(Scroll, {
+                BackgroundColor3 = 'MainColor';
+                BorderColor3 = 'OutlineColor';
+                ScrollBarImageColor3 = 'AccentColor';
+            });
+
+            Library:Create('UIListLayout', {
+                Padding = UDim.new(0, 6);
+                FillDirection = Enum.FillDirection.Vertical;
+                SortOrder = Enum.SortOrder.LayoutOrder;
+                Parent = Scroll;
+            });
+
+            Library:Create('UIPadding', {
+                PaddingTop = UDim.new(0, 6);
+                PaddingBottom = UDim.new(0, 6);
+                PaddingLeft = UDim.new(0, 6);
+                PaddingRight = UDim.new(0, 6);
+                Parent = Scroll;
+            });
+
+            local InputRow = Library:Create('Frame', {
+                BackgroundTransparency = 1;
+                Position = UDim2.new(0, 6, 1, -36);
+                Size = UDim2.new(1, -12, 0, 28);
+                ZIndex = 5;
+                Parent = BoxInner;
+            });
+
+            local InputBox = Library:Create('TextBox', {
+                BackgroundColor3 = Library.MainColor;
+                BorderColor3 = Library.OutlineColor;
+                BorderMode = Enum.BorderMode.Inset;
+                Size = UDim2.new(1, -64, 1, 0);
+                Font = Library.Font;
+                PlaceholderText = 'Type a message...';
+                PlaceholderColor3 = Library.DisabledTextColor;
+                Text = '';
+                TextColor3 = Library.FontColor;
+                TextSize = 13;
+                TextXAlignment = Enum.TextXAlignment.Left;
+                ClearTextOnFocus = false;
+                ZIndex = 6;
+                Parent = InputRow;
+            });
+
+            Library:Create('UICorner', {
+                CornerRadius = UDim.new(0, 4);
+                Parent = InputBox;
+            });
+
+            Library:AddToRegistry(InputBox, {
+                BackgroundColor3 = 'MainColor';
+                BorderColor3 = 'OutlineColor';
+                TextColor3 = 'FontColor';
+            });
+
+            Library:Create('UIPadding', {
+                PaddingLeft = UDim.new(0, 8);
+                Parent = InputBox;
+            });
+
+            local SendBtn = Library:Create('TextButton', {
+                BackgroundColor3 = Library.AccentColor;
+                BorderSizePixel = 0;
+                Position = UDim2.new(1, -58, 0, 0);
+                Size = UDim2.new(0, 58, 1, 0);
+                Font = Library.Font;
+                Text = 'Send';
+                TextColor3 = Color3.new(1, 1, 1);
+                TextSize = 13;
+                AutoButtonColor = false;
+                ZIndex = 6;
+                Parent = InputRow;
+            });
+
+            Library:Create('UICorner', {
+                CornerRadius = UDim.new(0, 4);
+                Parent = SendBtn;
+            });
+
+            Library:AddToRegistry(SendBtn, {
+                BackgroundColor3 = 'AccentColor';
+            });
+
+            local function scrollToBottom()
+                task.defer(function()
+                    Scroll.CanvasPosition = Vector2.new(0, math.max(0, Scroll.AbsoluteCanvasSize.Y));
+                end);
+            end;
+
+            local function resolveAvatar(Avatar)
+                if typeof(Avatar) == 'number' then
+                    return 'rbxassetid://' .. tostring(Avatar);
+                end;
+                if typeof(Avatar) == 'string' and Avatar ~= '' then
+                    if Avatar:match('^%d+$') then
+                        return 'rbxassetid://' .. Avatar;
+                    end;
+                    return Avatar;
+                end;
+                return 'rbxassetid://0';
+            end;
+
+            local function pruneMessages()
+                while #ChatAPI._messages > ChatAPI._maxMessages do
+                    local old = table.remove(ChatAPI._messages, 1);
+                    if old and old.Destroy then
+                        pcall(function() old:Destroy() end);
+                    end;
+                end;
+            end;
+
+            function ChatAPI:SendMessage(Avatar, Username, Message, IsLocal)
+                Username = tostring(Username or 'Unknown');
+                Message = tostring(Message or '');
+
+                local Row = Library:Create('Frame', {
+                    BackgroundTransparency = 1;
+                    Size = UDim2.new(1, -4, 0, 0);
+                    AutomaticSize = Enum.AutomaticSize.Y;
+                    ZIndex = 6;
+                    Parent = Scroll;
+                });
+
+                local AvatarImg = Library:Create('ImageLabel', {
+                    BackgroundColor3 = Color3.fromRGB(40, 40, 48);
+                    BorderSizePixel = 0;
+                    Size = UDim2.new(0, 28, 0, 28);
+                    Image = resolveAvatar(Avatar);
+                    ZIndex = 7;
+                    Parent = Row;
+                });
+                Library:Create('UICorner', {
+                    CornerRadius = UDim.new(1, 0);
+                    Parent = AvatarImg;
+                });
+
+                local nameText = Username;
+                if ChatAPI._showTimestamps then
+                    local t = os.date('*t');
+                    nameText = string.format('[%02d:%02d] %s', t.hour, t.min, Username);
+                end;
+
+                local NameL = Library:CreateLabel({
+                    Position = UDim2.new(0, 34, 0, 0);
+                    Size = UDim2.new(1, -34, 0, 14);
+                    Text = nameText;
+                    TextSize = 12;
+                    TextXAlignment = Enum.TextXAlignment.Left;
+                    TextColor3 = IsLocal and Library.AccentColor or Library.FontColor;
+                    ZIndex = 7;
+                    Parent = Row;
+                });
+                if IsLocal then
+                    Library:AddToRegistry(NameL, { TextColor3 = 'AccentColor' });
+                end;
+
+                local MsgL = Library:CreateLabel({
+                    Position = UDim2.new(0, 34, 0, 14);
+                    Size = UDim2.new(1, -34, 0, 0);
+                    Text = Message;
+                    TextSize = 13;
+                    TextXAlignment = Enum.TextXAlignment.Left;
+                    TextWrapped = true;
+                    TextYAlignment = Enum.TextYAlignment.Top;
+                    ZIndex = 7;
+                    Parent = Row;
+                });
+
+                local bounds = select(2, Library:GetTextBounds(Message, Library.Font, 13 * DPIScale, Vector2.new(math.max(80, Scroll.AbsoluteSize.X - 50), 1000)));
+                MsgL.Size = UDim2.new(1, -34, 0, math.max(16, bounds + 2));
+                Row.Size = UDim2.new(1, -4, 0, math.max(32, 16 + MsgL.Size.Y.Offset));
+
+                table.insert(ChatAPI._messages, Row);
+                pruneMessages();
+                scrollToBottom();
+                return Row;
+            end;
+
+            function ChatAPI:GetTypedMessage()
+                return InputBox.Text or '';
+            end;
+
+            function ChatAPI:ClearText()
+                InputBox.Text = '';
+            end;
+
+            function ChatAPI:ClearMessages()
+                for _, row in ipairs(ChatAPI._messages) do
+                    pcall(function() row:Destroy() end);
+                end;
+                table.clear(ChatAPI._messages);
+            end;
+
+            function ChatAPI:GetMessageCount()
+                return #ChatAPI._messages;
+            end;
+
+            function ChatAPI:SetMaxMessages(n)
+                ChatAPI._maxMessages = math.max(10, tonumber(n) or 80);
+                pruneMessages();
+            end;
+
+            function ChatAPI:SetTimestamps(enabled)
+                ChatAPI._showTimestamps = enabled and true or false;
+            end;
+
+            function ChatAPI:SetTitle(text)
+                TitleLabel.Text = tostring(text or 'Global Chat');
+            end;
+
+            function ChatAPI:SetPlaceholder(text)
+                InputBox.PlaceholderText = tostring(text or 'Type a message...');
+            end;
+
+            function ChatAPI:SetStatus(Text, Color)
+                ChatAPI._statusText = tostring(Text or 'Online');
+                StatusLabel.Text = ChatAPI._statusText;
+                if typeof(Color) == 'Color3' then
+                    ChatAPI._statusColor = Color;
+                    StatusDot.BackgroundColor3 = Color;
+                end;
+            end;
+
+            function ChatAPI:OnMessageSendPressed(Callback)
+                if typeof(Callback) == 'function' then
+                    ChatAPI._onSend = Callback;
+                end;
+            end;
+
+            local function fireSend()
+                local text = InputBox.Text;
+                if not text or not text:match('%S') then return end;
+                if ChatAPI._onSend then
+                    Library:SafeCallback(ChatAPI._onSend, text);
+                end;
+                -- do not auto-clear here; scripts can ClearText() after send
+            end;
+
+            SendBtn.MouseButton1Click:Connect(fireSend);
+            InputBox.FocusLost:Connect(function(enter)
+                if enter then fireSend() end;
+            end);
+
+            return ChatAPI;
+        end;
+
+
         function Tab:AddTabbox(Info)
             local Tabbox = {
                 Tabs = {};
@@ -7642,6 +8403,3 @@ end
 function Library:EnableESPPreview(config)
     return Library:CreateESPPreview(config)
 end
-
-if getgenv().skip_getgenv_linoria ~= true then getgenv().Library = Library end
-return Library
