@@ -125,7 +125,7 @@ local Library = {
     CantDragForced = false;
 
     NotifySide = "Left";
-    ShowCustomCursor = true;
+    ShowCustomCursor = false; -- default off (no blue triangle cursor)
     ShowToggleFrameInKeybinds = true;
     NotifyOnError = false; -- true = Library:Notify for SafeCallback (still warns in the developer console)
 
@@ -5656,7 +5656,7 @@ function Library:CreateWindow(...)
     if typeof(Config.TabPadding) ~= 'number' then Config.TabPadding = 1 end
     if typeof(Config.MenuFadeTime) ~= 'number' then Config.MenuFadeTime = 0.2 end
     if typeof(Config.NotifySide) ~= "string" then Library.NotifySide = 'Left' else Library.NotifySide = Config.NotifySide end
-    if typeof(Config.ShowCustomCursor) ~= 'boolean' then Library.ShowCustomCursor = true else Library.ShowCustomCursor = Config.ShowCustomCursor end
+    if typeof(Config.ShowCustomCursor) ~= 'boolean' then Library.ShowCustomCursor = false else Library.ShowCustomCursor = Config.ShowCustomCursor end
 
     if typeof(Config.Position) ~= 'UDim2' then Config.Position = UDim2.fromOffset(175, 50) end
     if typeof(Config.Size) ~= 'UDim2' then
@@ -5773,15 +5773,75 @@ function Library:CreateWindow(...)
         BorderColor3 = 'AccentColor';
     });
 
-    local WindowLabel = Library:CreateLabel({
-        Position = UDim2.new(0, 10, 0, 5);
-        Size = UDim2.new(0, 0, 0, 20);
-        Text = Config.Title or '';
-        TextXAlignment = Enum.TextXAlignment.Left;
-        RichText = true; -- Added to support color fonts
-        ZIndex = 1;
+    -- Title area (supports cycling words like 1up)
+    local TitleContainer = Library:Create('Frame', {
+        BackgroundTransparency = 1;
+        BorderSizePixel = 0;
+        Position = UDim2.new(0, 10, 0, 4);
+        Size = UDim2.new(1, -120, 0, 22);
+        ClipsDescendants = true;
+        ZIndex = 2;
         Parent = Inner;
     });
+
+    local function MakeCycleLabel(Text, Pos)
+        return Library:CreateLabel({
+            BackgroundTransparency = 1;
+            Position = Pos or UDim2.new(0, 0, 0, 0);
+            Size = UDim2.new(1, 0, 1, 0);
+            Text = tostring(Text or '');
+            TextXAlignment = Enum.TextXAlignment.Left;
+            TextSize = 15;
+            RichText = true;
+            ZIndex = 3;
+            Parent = TitleContainer;
+        });
+    end;
+
+    local TitleWords = Config.TitleWords;
+    if type(TitleWords) ~= 'table' or #TitleWords == 0 then
+        local base = (typeof(Config.SubTitle) == 'string' and Config.SubTitle ~= '' and Config.SubTitle)
+            or (typeof(Config.SubName) == 'string' and Config.SubName ~= '' and Config.SubName)
+            or Config.Title
+            or 'Project X';
+        TitleWords = {
+            base;
+            'On top';
+            'Best Auto dupe';
+            'And universal';
+            'Script';
+            '7+ games';
+            'supported';
+        };
+    end;
+
+    local WindowLabel = MakeCycleLabel(TitleWords[1], UDim2.new(0, 0, 0, 0));
+    local TitleCycleRunning = true;
+
+    task.spawn(function()
+        local idx = 1;
+        local TweenService = game:GetService('TweenService');
+        while TitleCycleRunning and TitleContainer and TitleContainer.Parent do
+            task.wait(1.6);
+            if not (TitleCycleRunning and TitleContainer and TitleContainer.Parent) then break end;
+            if #TitleWords <= 1 then continue end;
+            local nextIdx = idx + 1;
+            if nextIdx > #TitleWords then nextIdx = 1 end;
+            local nextLabel = MakeCycleLabel(TitleWords[nextIdx], UDim2.new(1, 0, 0, 0));
+            local ti = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out);
+            pcall(function()
+                TweenService:Create(WindowLabel, ti, { Position = UDim2.new(-1, 0, 0, 0) }):Play();
+                TweenService:Create(nextLabel, ti, { Position = UDim2.new(0, 0, 0, 0) }):Play();
+            end);
+            task.wait(0.5);
+            pcall(function()
+                if WindowLabel then WindowLabel:Destroy() end;
+            end);
+            WindowLabel = nextLabel;
+            idx = nextIdx;
+            Window.Title = TitleWords[idx];
+        end;
+    end);
 
     -- MODIFIED: Main section with tabs at the top
     local MainSectionOuter = Library:Create('Frame', {
@@ -5894,7 +5954,20 @@ function Library:CreateWindow(...)
     function Window:SetWindowTitle(Title)
         if typeof(Title) == "string" then
             Window.Title = Title;
-            WindowLabel.Text = Window.Title;
+            if WindowLabel and WindowLabel.Parent then
+                WindowLabel.Text = Window.Title;
+            end;
+        end
+    end;
+
+    -- Optional: replace the cycling word list at runtime
+    function Window:SetTitleWords(Words)
+        if type(Words) == 'table' and #Words > 0 then
+            TitleWords = Words;
+            if WindowLabel and WindowLabel.Parent then
+                WindowLabel.Text = tostring(Words[1]);
+            end;
+            Window.Title = tostring(Words[1]);
         end
     end;
 
