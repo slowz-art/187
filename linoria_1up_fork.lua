@@ -6731,19 +6731,52 @@ function Library:_AttachFavoriteStar(Toggle, Idx, ToggleLabel)
     if not Toggle or Toggle.FavoriteButton then return end
     if not ToggleLabel or not ToggleLabel.Parent then return end
 
+    -- Pin star to the FAR RIGHT of the toggle row (end), not inside the
+    -- addon UIListLayout (that placed it mid-row next to the label).
+    local row = ToggleLabel.Parent -- ToggleInner
+    local outer = row and row.Parent -- ToggleOuter
+    local parent = outer or row or ToggleLabel
+
     local Star = Instance.new("TextButton")
     Star.Name = "FavoriteStar"
     Star.BackgroundTransparency = 1
-    Star.Size = UDim2.new(0, 16, 0, 16)
-    Star.AutomaticSize = Enum.AutomaticSize.None
+    Star.AnchorPoint = Vector2.new(1, 0.5)
+    Star.Position = UDim2.new(1, 200, 0.5, 0) -- sits past label, at end of row
+    Star.Size = UDim2.new(0, 18, 0, 18)
     Star.Text = (Library.Favorites and Library.Favorites[Idx]) and "★" or "☆"
     Star.TextColor3 = (Library.Favorites and Library.Favorites[Idx]) and Library.AccentColor or Library.DisabledTextColor
-    Star.TextSize = 14
+    Star.TextSize = 15
     Star.Font = Library.Font
-    Star.ZIndex = 15
+    Star.ZIndex = 20
     Star.AutoButtonColor = false
-    Star.LayoutOrder = 9999
-    Star.Parent = ToggleLabel
+    Star.Parent = parent
+
+    -- Keep star at the visual end of the groupbox content width
+    local function reanchor()
+        if not Star or not Star.Parent then return end
+        -- Place at right edge of the groupbox container if possible
+        local container = Toggle.Container
+        if container and outer then
+            local ox = outer.AbsolutePosition.X
+            local cx = container.AbsolutePosition.X + container.AbsoluteSize.X
+            local rel = math.max(20, cx - ox - 6)
+            Star.Position = UDim2.new(0, rel, 0.5, 0)
+            Star.AnchorPoint = Vector2.new(1, 0.5)
+        else
+            Star.AnchorPoint = Vector2.new(1, 0.5)
+            Star.Position = UDim2.new(1, 210, 0.5, 0)
+        end
+    end
+    task.defer(reanchor)
+    pcall(function()
+        if Toggle.Container then
+            Toggle.Container:GetPropertyChangedSignal("AbsoluteSize"):Connect(reanchor)
+            Toggle.Container:GetPropertyChangedSignal("AbsolutePosition"):Connect(reanchor)
+        end
+        if outer then
+            outer:GetPropertyChangedSignal("AbsolutePosition"):Connect(reanchor)
+        end
+    end)
 
     Toggle.FavoriteButton = Star
     Star.MouseButton1Click:Connect(function()
@@ -6752,8 +6785,7 @@ function Library:_AttachFavoriteStar(Toggle, Idx, ToggleLabel)
             Toggle:SetFavorite(fav)
         else
             Library.Favorites = Library.Favorites or {}
-            Library.Favorites[Idx] = fav or nil
-            if not fav then Library.Favorites[Idx] = nil end
+            if fav then Library.Favorites[Idx] = true else Library.Favorites[Idx] = nil end
             pcall(function() Library:RefreshFavoritesPanel() end)
         end
         Star.Text = fav and "★" or "☆"
@@ -7024,56 +7056,16 @@ end
 
 
 
--- ===================== GLOBAL CHAT (OPT-IN) =====================
--- Library:EnableGlobalChat()  or  Library:CreateGlobalChat({ Position = ..., MaxMessages = 50 })
--- Toggle: Library:SetGlobalChatVisible(true/false)
--- Send local note: Library:AddGlobalChatMessage("System", "hello", Color3.new(1,1,1))
+
+-- ===================== GLOBAL CHAT (1up-style) =====================
+-- Library:EnableGlobalChat() / CreateGlobalChat()
+-- API: :SendMessage(avatar, username, message, isLocal)
+--      :OnMessageSendPressed(fn)  :GetTypedMessage()  :ClearText()
+--      :SetVisibility(bool)  :SetStatus(text, color)
 
 Library.GlobalChatEnabled = false
 Library.GlobalChatVisible = true
-Library.GlobalChatMaxMessages = 40
-
-function Library:AddGlobalChatMessage(author, message, color)
-    if not Library._GlobalChatScroll then return end
-    author = tostring(author or "???")
-    message = tostring(message or "")
-    color = color or Color3.fromRGB(230, 230, 240)
-
-    local row = Instance.new("TextLabel")
-    row.BackgroundTransparency = 1
-    row.Size = UDim2.new(1, -8, 0, 0)
-    row.AutomaticSize = Enum.AutomaticSize.Y
-    row.Font = Library.Font
-    row.TextSize = 13
-    row.TextXAlignment = Enum.TextXAlignment.Left
-    row.TextYAlignment = Enum.TextYAlignment.Top
-    row.TextWrapped = true
-    row.RichText = true
-    row.TextColor3 = color
-    row.Text = string.format("<font color=\"#8ec7ff\">[%s]</font> %s", author:gsub("[<>]", ""), message:gsub("[<>]", ""))
-    row.ZIndex = 262
-    row.Parent = Library._GlobalChatScroll
-
-    -- cap messages
-    local kids = {}
-    for _, c in ipairs(Library._GlobalChatScroll:GetChildren()) do
-        if c:IsA("TextLabel") then kids[#kids + 1] = c end
-    end
-    while #kids > (Library.GlobalChatMaxMessages or 40) do
-        kids[1]:Destroy()
-        table.remove(kids, 1)
-    end
-
-    task.defer(function()
-        if Library._GlobalChatScroll then
-            local layout = Library._GlobalChatScroll:FindFirstChildOfClass("UIListLayout")
-            if layout then
-                Library._GlobalChatScroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
-                Library._GlobalChatScroll.CanvasPosition = Vector2.new(0, math.max(0, layout.AbsoluteContentSize.Y))
-            end
-        end
-    end)
-end
+Library.GlobalChatMaxMessages = 50
 
 function Library:SetGlobalChatVisible(vis)
     Library.GlobalChatVisible = vis and true or false
@@ -7082,163 +7074,298 @@ function Library:SetGlobalChatVisible(vis)
     end
 end
 
+function Library:AddGlobalChatMessage(author, message, color)
+    -- back-compat wrapper
+    if Library._GlobalChatApi and Library._GlobalChatApi.SendMessage then
+        Library._GlobalChatApi:SendMessage(nil, author, message, false)
+    end
+end
+
 function Library:CreateGlobalChat(config)
     config = config or {}
     if Library._GlobalChatPanel and Library._GlobalChatPanel.Parent then
         Library:SetGlobalChatVisible(true)
-        return Library._GlobalChatPanel
+        return Library._GlobalChatApi or Library._GlobalChatPanel
     end
 
     Library.GlobalChatEnabled = true
-    Library.GlobalChatMaxMessages = config.MaxMessages or 40
+    local Api = {}
+    local onSend = nil
 
     local panel = Instance.new("Frame")
     panel.Name = "GlobalChatPanel"
-    panel.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
-    panel.BackgroundTransparency = 0.12
+    panel.BackgroundColor3 = Color3.fromRGB(27, 25, 29)
+    panel.BackgroundTransparency = 0.15
     panel.BorderSizePixel = 0
-    panel.Size = config.Size or UDim2.new(0, 320, 0, 200)
-    panel.Position = config.Position or UDim2.new(0, 12, 1, -220)
+    panel.Size = config.Size or UDim2.new(0, 340, 0, 320)
+    panel.Position = config.Position or UDim2.new(0, 14, 0.5, -160)
     panel.ZIndex = 260
     panel.Active = true
     panel.Visible = Library.GlobalChatVisible
     panel.Parent = ScreenGui
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 6)
 
-    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
     local stroke = Instance.new("UIStroke", panel)
-    stroke.Color = Library.AccentColor
-    stroke.Thickness = 1.2
-    stroke.Transparency = 0.35
-
-    local header = Instance.new("Frame")
-    header.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
-    header.BorderSizePixel = 0
-    header.Size = UDim2.new(1, 0, 0, 28)
-    header.ZIndex = 261
-    header.Parent = panel
-    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
+    stroke.Color = Color3.fromRGB(35, 33, 38)
+    stroke.Thickness = 1
 
     local title = Instance.new("TextLabel")
     title.BackgroundTransparency = 1
-    title.Size = UDim2.new(1, -60, 1, 0)
-    title.Position = UDim2.new(0, 10, 0, 0)
+    title.Position = UDim2.new(0, 12, 0, 12)
+    title.Size = UDim2.new(1, -50, 0, 16)
     title.Font = Library.Font
-    title.TextSize = 13
+    title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.TextColor3 = Library.AccentColor
-    title.Text = config.Title or "Global Chat"
-    title.ZIndex = 262
-    title.Parent = header
+    title.TextColor3 = Color3.fromRGB(240, 240, 240)
+    title.Text = config.Title or "GLOBAL CHAT"
+    title.ZIndex = 261
+    title.Parent = panel
+
+    local sub = Instance.new("TextLabel")
+    sub.BackgroundTransparency = 1
+    sub.Position = UDim2.new(0, 14, 0, 30)
+    sub.Size = UDim2.new(1, -28, 0, 14)
+    sub.Font = Library.Font
+    sub.TextSize = 13
+    sub.TextTransparency = 0.4
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.TextColor3 = Color3.fromRGB(240, 240, 240)
+    sub.Text = config.Subtitle or "Chat with other users here."
+    sub.ZIndex = 261
+    sub.Parent = panel
 
     local hideBtn = Instance.new("TextButton")
     hideBtn.BackgroundTransparency = 1
-    hideBtn.Size = UDim2.new(0, 28, 1, 0)
-    hideBtn.Position = UDim2.new(1, -28, 0, 0)
+    hideBtn.Size = UDim2.new(0, 28, 0, 28)
+    hideBtn.Position = UDim2.new(1, -30, 0, 6)
     hideBtn.Font = Library.Font
     hideBtn.TextSize = 16
     hideBtn.Text = "×"
     hideBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
-    hideBtn.ZIndex = 263
-    hideBtn.Parent = header
+    hideBtn.ZIndex = 262
+    hideBtn.Parent = panel
     hideBtn.MouseButton1Click:Connect(function()
         Library:SetGlobalChatVisible(false)
     end)
+
+    local status = Instance.new("TextLabel")
+    status.Name = "Status"
+    status.BackgroundTransparency = 1
+    status.Position = UDim2.new(0, 14, 0, 48)
+    status.Size = UDim2.new(1, -28, 0, 14)
+    status.Font = Library.Font
+    status.TextSize = 12
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.TextColor3 = Color3.fromRGB(140, 200, 255)
+    status.Text = ""
+    status.ZIndex = 261
+    status.Parent = panel
 
     local scroll = Instance.new("ScrollingFrame")
     scroll.Name = "Messages"
     scroll.BackgroundTransparency = 1
     scroll.BorderSizePixel = 0
-    scroll.Position = UDim2.new(0, 6, 0, 32)
-    scroll.Size = UDim2.new(1, -12, 1, -38)
+    scroll.Position = UDim2.new(0, 12, 0, 66)
+    scroll.Size = UDim2.new(1, -24, 1, -118)
     scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    scroll.ScrollBarThickness = 3
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.ScrollBarThickness = 2
     scroll.ScrollBarImageColor3 = Library.AccentColor
     scroll.ZIndex = 261
     scroll.Parent = panel
 
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 3)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = scroll
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 6)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Parent = scroll
 
-    Library._GlobalChatPanel = panel
-    Library._GlobalChatScroll = scroll
+    -- input bar
+    local inputFrame = Instance.new("Frame")
+    inputFrame.BackgroundColor3 = Color3.fromRGB(27, 26, 29)
+    inputFrame.BorderSizePixel = 0
+    inputFrame.AnchorPoint = Vector2.new(0, 1)
+    inputFrame.Position = UDim2.new(0, 12, 1, -12)
+    inputFrame.Size = UDim2.new(1, -66, 0, 32)
+    inputFrame.ZIndex = 261
+    inputFrame.Parent = panel
+    Instance.new("UICorner", inputFrame).CornerRadius = UDim.new(0, 4)
 
-    pcall(function()
-        Library:MakeDraggable(panel, 28, false)
+    local input = Instance.new("TextBox")
+    input.BackgroundTransparency = 1
+    input.Position = UDim2.new(0, 10, 0, 8)
+    input.Size = UDim2.new(1, -20, 0, 16)
+    input.Font = Library.Font
+    input.TextSize = 14
+    input.TextXAlignment = Enum.TextXAlignment.Left
+    input.TextColor3 = Color3.fromRGB(240, 240, 240)
+    input.PlaceholderColor3 = Color3.fromRGB(185, 185, 185)
+    input.PlaceholderText = "Message..."
+    input.Text = ""
+    input.ClearTextOnFocus = false
+    input.ZIndex = 262
+    input.Parent = inputFrame
+
+    local sendBtn = Instance.new("TextButton")
+    sendBtn.BackgroundColor3 = Color3.fromRGB(27, 26, 29)
+    sendBtn.BorderSizePixel = 0
+    sendBtn.AnchorPoint = Vector2.new(1, 1)
+    sendBtn.Position = UDim2.new(1, -12, 1, -12)
+    sendBtn.Size = UDim2.new(0, 32, 0, 32)
+    sendBtn.Text = ""
+    sendBtn.AutoButtonColor = false
+    sendBtn.ZIndex = 261
+    sendBtn.Parent = panel
+    Instance.new("UICorner", sendBtn).CornerRadius = UDim.new(0, 4)
+
+    local sendIcon = Instance.new("ImageLabel")
+    sendIcon.BackgroundTransparency = 1
+    sendIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+    sendIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+    sendIcon.Size = UDim2.new(0, 20, 0, 20)
+    sendIcon.Image = "rbxassetid://101636617799068"
+    sendIcon.ImageTransparency = 0.15
+    sendIcon.ZIndex = 262
+    sendIcon.Parent = sendBtn
+
+    local function doSend()
+        local msg = input.Text
+        if not msg or msg:gsub("%s+", "") == "" then return end
+        if onSend then
+            pcall(onSend, msg)
+        else
+            Api:SendMessage(nil, LocalPlayer.DisplayName or LocalPlayer.Name, msg, true)
+        end
+        input.Text = ""
+    end
+    sendBtn.MouseButton1Click:Connect(doSend)
+    input.FocusLost:Connect(function(enter)
+        if enter then doSend() end
     end)
 
-    -- Hook player chat
+    function Api:SendMessage(Avatar, Username, Message, IsLocalPlayer)
+        Username = tostring(Username or "???")
+        Message = tostring(Message or "")
+
+        local row = Instance.new("Frame")
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, -4, 0, 0)
+        row.AutomaticSize = Enum.AutomaticSize.Y
+        row.ZIndex = 262
+        row.Parent = scroll
+
+        local avatar = Instance.new("ImageLabel")
+        avatar.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+        avatar.BorderSizePixel = 0
+        avatar.Size = UDim2.new(0, 28, 0, 28)
+        avatar.Position = UDim2.new(0, 0, 0, 0)
+        avatar.Image = typeof(Avatar) == "string" and Avatar or ""
+        avatar.ZIndex = 263
+        avatar.Parent = row
+        Instance.new("UICorner", avatar).CornerRadius = UDim.new(1, 0)
+
+        local name = Instance.new("TextLabel")
+        name.BackgroundTransparency = 1
+        name.Position = UDim2.new(0, 34, 0, 0)
+        name.Size = UDim2.new(1, -34, 0, 14)
+        name.Font = Library.Font
+        name.TextSize = 13
+        name.TextXAlignment = Enum.TextXAlignment.Left
+        name.TextColor3 = IsLocalPlayer and Library.AccentColor or Color3.fromRGB(200, 210, 255)
+        name.Text = Username
+        name.ZIndex = 263
+        name.Parent = row
+
+        local body = Instance.new("TextLabel")
+        body.BackgroundTransparency = 1
+        body.Position = UDim2.new(0, 34, 0, 14)
+        body.Size = UDim2.new(1, -34, 0, 0)
+        body.AutomaticSize = Enum.AutomaticSize.Y
+        body.Font = Library.Font
+        body.TextSize = 13
+        body.TextXAlignment = Enum.TextXAlignment.Left
+        body.TextYAlignment = Enum.TextYAlignment.Top
+        body.TextWrapped = true
+        body.TextColor3 = Color3.fromRGB(230, 230, 235)
+        body.Text = Message
+        body.ZIndex = 263
+        body.Parent = row
+
+        -- prune
+        local msgs = {}
+        for _, c in ipairs(scroll:GetChildren()) do
+            if c:IsA("Frame") then msgs[#msgs + 1] = c end
+        end
+        while #msgs > (Library.GlobalChatMaxMessages or 50) do
+            msgs[1]:Destroy()
+            table.remove(msgs, 1)
+        end
+        task.defer(function()
+            scroll.CanvasPosition = Vector2.new(0, math.max(0, list.AbsoluteContentSize.Y))
+        end)
+    end
+
+    function Api:SetVisibility(Bool)
+        Library:SetGlobalChatVisible(Bool)
+    end
+    function Api:SetStatus(Text, Color)
+        status.Text = tostring(Text or "")
+        if Color then status.TextColor3 = Color end
+    end
+    function Api:SetStatusText(Text)
+        status.Text = tostring(Text or "")
+    end
+    function Api:OnMessageSendPressed(Func)
+        onSend = Func
+    end
+    function Api:GetTypedMessage()
+        return input.Text
+    end
+    function Api:ClearText()
+        input.Text = ""
+    end
+
+    -- live player chat feed
     if not Library._GlobalChatHooked then
         Library._GlobalChatHooked = true
         local function hookPlayer(plr)
             pcall(function()
                 plr.Chatted:Connect(function(msg)
                     if not Library.GlobalChatEnabled then return end
-                    local col = Color3.fromRGB(230, 230, 240)
-                    pcall(function()
-                        if plr.Team and plr.Team.TeamColor then
-                            col = plr.TeamColor.Color
-                        end
-                    end)
-                    Library:AddGlobalChatMessage(plr.DisplayName or plr.Name, msg, col)
+                    Api:SendMessage(nil, plr.DisplayName or plr.Name, msg, plr == LocalPlayer)
                 end)
             end)
         end
-        for _, plr in ipairs(Players:GetPlayers()) do
-            hookPlayer(plr)
-        end
+        for _, plr in ipairs(Players:GetPlayers()) do hookPlayer(plr) end
         Library:GiveSignal(Players.PlayerAdded:Connect(hookPlayer))
     end
 
-    Library:AddGlobalChatMessage("System", "Global chat enabled", Color3.fromRGB(140, 200, 255))
-    return panel
+    Library._GlobalChatPanel = panel
+    Library._GlobalChatApi = Api
+    pcall(function() Library:MakeDraggable(panel, 28, false) end)
+    Api:SetStatus("Connected", Color3.fromRGB(140, 200, 255))
+    return Api
 end
 
 function Library:EnableGlobalChat(config)
     return Library:CreateGlobalChat(config)
 end
 
--- ===================== ESP PREVIEW (OPT-IN) =====================
--- Library:EnableESPPreview()
--- Library:SetESPPreview({ Box = true, Name = true, Tracer = true, Health = true, Color = Color3 })
--- Library:SetESPPreviewVisible(true/false)
+-- ===================== ESP PREVIEW (1up-style card + overlay) =====================
+-- Library:EnableESPPreview() / CreateESPPreview()
+-- Library:SetESPPreview({ Box, Corners, Name, Health, Tracer, Skeleton, Color })
+-- Matches hybrid_1up ESPPreview layout: translucent card, viewport, 2D overlays
 
 Library.ESPPreviewEnabled = false
 Library.ESPPreviewVisible = true
 Library.ESPPreviewSettings = {
     Box = true,
+    Corners = true,
     Name = true,
-    Tracer = true,
     Health = true,
+    Tracer = false,
     Skeleton = false,
-    Color = Color3.fromRGB(0, 170, 255),
+    Color = Color3.fromRGB(255, 255, 255),
 }
-
-local function _espPreviewClearDrawings()
-    if not Library._ESPPreviewDrawings then return end
-    for _, d in ipairs(Library._ESPPreviewDrawings) do
-        pcall(function()
-            if d.Remove then d:Remove()
-            elseif d.Destroy then d:Destroy()
-            else d.Visible = false end
-        end)
-    end
-    Library._ESPPreviewDrawings = {}
-end
-
-local function _espPreviewNew(class)
-    if DrawingLib.drawing_replaced == true or type(DrawingLib.new) ~= "function" then
-        return nil
-    end
-    local ok, obj = pcall(DrawingLib.new, class)
-    if ok and obj then
-        Library._ESPPreviewDrawings = Library._ESPPreviewDrawings or {}
-        Library._ESPPreviewDrawings[#Library._ESPPreviewDrawings + 1] = obj
-        return obj
-    end
-    return nil
-end
 
 function Library:SetESPPreview(settings)
     Library.ESPPreviewSettings = Library.ESPPreviewSettings or {}
@@ -7247,7 +7374,7 @@ function Library:SetESPPreview(settings)
             Library.ESPPreviewSettings[k] = v
         end
     end
-    Library:_RefreshESPPreview()
+    Library:_RefreshESPPreviewOverlays()
 end
 
 function Library:SetESPPreviewVisible(vis)
@@ -7255,142 +7382,34 @@ function Library:SetESPPreviewVisible(vis)
     if Library._ESPPreviewPanel then
         Library._ESPPreviewPanel.Visible = Library.ESPPreviewVisible
     end
-    if not Library.ESPPreviewVisible then
-        _espPreviewClearDrawings()
-    else
-        Library:_RefreshESPPreview()
-    end
 end
 
-function Library:_RefreshESPPreview()
-    if not Library.ESPPreviewEnabled or not Library.ESPPreviewVisible then
-        _espPreviewClearDrawings()
-        return
-    end
-    if not Library._ESPPreviewViewport then return end
-
+function Library:_RefreshESPPreviewOverlays()
+    local o = Library._ESPPreviewOverlay
+    if not o then return end
     local s = Library.ESPPreviewSettings or {}
-    local color = s.Color or Library.AccentColor
-    local vp = Library._ESPPreviewViewport
-    local abs = vp.AbsolutePosition
-    local size = vp.AbsoluteSize
-    if size.X < 10 or size.Y < 10 then return end
-
-    -- Demo "player" rect in the middle of the preview viewport (screen space)
-    local cx = abs.X + size.X * 0.5
-    local cy = abs.Y + size.Y * 0.55
-    local boxW, boxH = size.X * 0.28, size.Y * 0.55
-    local x1, y1 = cx - boxW / 2, cy - boxH / 2
-    local x2, y2 = cx + boxW / 2, cy + boxH / 2
-
-    _espPreviewClearDrawings()
-
-    local useDrawing = false
-    if s.Box ~= false then
-        local sq = _espPreviewNew("Square")
-        if sq then
-            useDrawing = true
-            sq.Visible = true
-            sq.Filled = false
-            sq.Thickness = 1.5
-            sq.Color = color
-            sq.Size = Vector2.new(boxW, boxH)
-            sq.Position = Vector2.new(x1, y1)
-            sq.ZIndex = 50
+    local color = s.Color or Color3.fromRGB(255, 255, 255)
+    if o.Box then
+        o.Box.Visible = s.Box == true
+        local st = o.Box:FindFirstChildOfClass("UIStroke")
+        if st then st.Color = color end
+    end
+    if o.Corners then
+        o.Corners.Visible = s.Corners == true
+        for _, f in ipairs(o.Corners:GetChildren()) do
+            if f:IsA("Frame") then f.BackgroundColor3 = color end
         end
     end
-
-    if s.Name ~= false then
-        local txt = _espPreviewNew("Text")
-        if txt then
-            useDrawing = true
-            txt.Visible = true
-            txt.Text = "Player"
-            txt.Size = 14
-            txt.Center = true
-            txt.Outline = true
-            txt.Color = color
-            txt.Position = Vector2.new(cx, y1 - 16)
-            txt.ZIndex = 51
-        end
+    if o.NameLabel then
+        o.NameLabel.Visible = s.Name ~= false
+        o.NameLabel.TextColor3 = color
     end
-
-    if s.Health ~= false then
-        local bar = _espPreviewNew("Square")
-        if bar then
-            useDrawing = true
-            bar.Visible = true
-            bar.Filled = true
-            bar.Thickness = 0
-            bar.Color = Color3.fromRGB(60, 220, 90)
-            bar.Size = Vector2.new(3, boxH * 0.72)
-            bar.Position = Vector2.new(x1 - 6, y2 - boxH * 0.72)
-            bar.ZIndex = 50
-        end
-        local barBg = _espPreviewNew("Square")
-        if barBg then
-            barBg.Visible = true
-            barBg.Filled = true
-            barBg.Thickness = 0
-            barBg.Color = Color3.fromRGB(30, 30, 30)
-            barBg.Size = Vector2.new(3, boxH)
-            barBg.Position = Vector2.new(x1 - 6, y1)
-            barBg.ZIndex = 49
-        end
+    if o.Health then
+        o.Health.Visible = s.Health ~= false
     end
-
-    if s.Tracer ~= false then
-        local line = _espPreviewNew("Line")
-        if line then
-            useDrawing = true
-            line.Visible = true
-            line.Thickness = 1.2
-            line.Color = color
-            line.From = Vector2.new(abs.X + size.X * 0.5, abs.Y + size.Y - 4)
-            line.To = Vector2.new(cx, y2)
-            line.ZIndex = 48
-        end
-    end
-
-    if s.Skeleton == true then
-        local function bone(a, b)
-            local ln = _espPreviewNew("Line")
-            if not ln then return end
-            ln.Visible = true
-            ln.Thickness = 1
-            ln.Color = color
-            ln.From = a
-            ln.To = b
-            ln.ZIndex = 50
-        end
-        local head = Vector2.new(cx, y1 + boxH * 0.08)
-        local neck = Vector2.new(cx, y1 + boxH * 0.18)
-        local pelvis = Vector2.new(cx, y1 + boxH * 0.55)
-        local lhand = Vector2.new(cx - boxW * 0.35, y1 + boxH * 0.40)
-        local rhand = Vector2.new(cx + boxW * 0.35, y1 + boxH * 0.40)
-        local lfoot = Vector2.new(cx - boxW * 0.22, y2 - 4)
-        local rfoot = Vector2.new(cx + boxW * 0.22, y2 - 4)
-        bone(head, neck)
-        bone(neck, pelvis)
-        bone(neck, lhand)
-        bone(neck, rhand)
-        bone(pelvis, lfoot)
-        bone(pelvis, rfoot)
-    end
-
-    -- Fallback UI preview if Drawing is unavailable
-    if Library._ESPPreviewFallback then
-        Library._ESPPreviewFallback.Visible = not useDrawing
-        if not useDrawing then
-            local f = Library._ESPPreviewFallback
-            f.Box.Visible = s.Box ~= false
-            f.NameLabel.Visible = s.Name ~= false
-            f.Health.Visible = s.Health ~= false
-            f.Tracer.Visible = s.Tracer ~= false
-            f.Box.BackgroundColor3 = color
-            f.NameLabel.TextColor3 = color
-            f.Tracer.BackgroundColor3 = color
-        end
+    if o.Tracer then
+        o.Tracer.Visible = s.Tracer == true
+        o.Tracer.BackgroundColor3 = color
     end
 end
 
@@ -7398,174 +7417,189 @@ function Library:CreateESPPreview(config)
     config = config or {}
     if Library._ESPPreviewPanel and Library._ESPPreviewPanel.Parent then
         Library:SetESPPreviewVisible(true)
-        Library:_RefreshESPPreview()
+        Library:_RefreshESPPreviewOverlays()
         return Library._ESPPreviewPanel
     end
 
     Library.ESPPreviewEnabled = true
-    if config.Settings then
-        Library:SetESPPreview(config.Settings)
-    end
+    if config.Settings then Library:SetESPPreview(config.Settings) end
 
     local panel = Instance.new("Frame")
     panel.Name = "ESPPreviewPanel"
-    panel.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
-    panel.BackgroundTransparency = 0.08
+    panel.BackgroundColor3 = Color3.fromRGB(29, 28, 32)
+    panel.BackgroundTransparency = 0.35
     panel.BorderSizePixel = 0
-    panel.Size = config.Size or UDim2.new(0, 240, 0, 280)
-    panel.Position = config.Position or UDim2.new(1, -260, 0.2, 0)
+    panel.Size = config.Size or UDim2.new(0, 260, 0, 260)
+    panel.Position = config.Position or UDim2.new(1, -280, 0.25, 0)
     panel.ZIndex = 255
     panel.Active = true
     panel.Visible = Library.ESPPreviewVisible
     panel.Parent = ScreenGui
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 6)
+    local pstroke = Instance.new("UIStroke", panel)
+    pstroke.Color = Color3.fromRGB(35, 33, 38)
 
-    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
-    local stroke = Instance.new("UIStroke", panel)
-    stroke.Color = Library.AccentColor
-    stroke.Thickness = 1.2
-    stroke.Transparency = 0.35
+    local pad = Instance.new("UIPadding", panel)
+    pad.PaddingTop = UDim.new(0, 10)
+    pad.PaddingBottom = UDim.new(0, 10)
+    pad.PaddingLeft = UDim.new(0, 10)
+    pad.PaddingRight = UDim.new(0, 10)
 
-    local header = Instance.new("Frame")
-    header.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
-    header.BorderSizePixel = 0
-    header.Size = UDim2.new(1, 0, 0, 28)
+    local header = Instance.new("TextLabel")
+    header.BackgroundTransparency = 1
+    header.Size = UDim2.new(1, -28, 0, 15)
+    header.Font = Library.Font
+    header.TextSize = 14
+    header.TextTransparency = 0.25
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.TextColor3 = Color3.fromRGB(240, 240, 240)
+    header.Text = config.Title or config.Name or "ESP Preview"
     header.ZIndex = 256
     header.Parent = panel
-    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 10)
-
-    local title = Instance.new("TextLabel")
-    title.BackgroundTransparency = 1
-    title.Size = UDim2.new(1, -60, 1, 0)
-    title.Position = UDim2.new(0, 10, 0, 0)
-    title.Font = Library.Font
-    title.TextSize = 13
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.TextColor3 = Library.AccentColor
-    title.Text = config.Title or "ESP Preview"
-    title.ZIndex = 257
-    title.Parent = header
 
     local hideBtn = Instance.new("TextButton")
     hideBtn.BackgroundTransparency = 1
-    hideBtn.Size = UDim2.new(0, 28, 1, 0)
-    hideBtn.Position = UDim2.new(1, -28, 0, 0)
+    hideBtn.Size = UDim2.new(0, 24, 0, 24)
+    hideBtn.Position = UDim2.new(1, -20, 0, -4)
     hideBtn.Font = Library.Font
     hideBtn.TextSize = 16
     hideBtn.Text = "×"
     hideBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
-    hideBtn.ZIndex = 258
-    hideBtn.Parent = header
+    hideBtn.ZIndex = 257
+    hideBtn.Parent = panel
     hideBtn.MouseButton1Click:Connect(function()
         Library:SetESPPreviewVisible(false)
     end)
 
-    local viewport = Instance.new("Frame")
-    viewport.Name = "Viewport"
-    viewport.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
-    viewport.BorderSizePixel = 0
-    viewport.Position = UDim2.new(0, 10, 0, 36)
-    viewport.Size = UDim2.new(1, -20, 1, -78)
-    viewport.ClipsDescendants = true
-    viewport.ZIndex = 256
-    viewport.Parent = panel
-    Instance.new("UICorner", viewport).CornerRadius = UDim.new(0, 8)
+    local bg = Instance.new("Frame")
+    bg.BackgroundColor3 = Color3.fromRGB(27, 26, 29)
+    bg.BorderSizePixel = 0
+    bg.Position = UDim2.new(0, 0, 0, 22)
+    bg.Size = UDim2.new(1, 0, 1, -50)
+    bg.ZIndex = 256
+    bg.ClipsDescendants = true
+    bg.Parent = panel
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 5)
+    local bgStroke = Instance.new("UIStroke", bg)
+    bgStroke.Color = Color3.fromRGB(35, 33, 38)
 
-    local grid = Instance.new("TextLabel")
-    grid.BackgroundTransparency = 1
-    grid.Size = UDim2.new(1, 0, 1, 0)
-    grid.Font = Library.Font
-    grid.TextSize = 11
-    grid.TextColor3 = Color3.fromRGB(50, 55, 65)
-    grid.Text = "preview stage"
-    grid.ZIndex = 256
-    grid.Parent = viewport
+    -- Viewport with a simple R6-ish block rig as placeholder
+    local vp = Instance.new("ViewportFrame")
+    vp.BackgroundTransparency = 1
+    vp.Size = UDim2.new(1, 0, 1, 0)
+    vp.ZIndex = 256
+    vp.Parent = bg
 
-    -- Fallback UI figures (when Drawing API missing)
-    local fallbackBox = Instance.new("Frame")
-    fallbackBox.Name = "Box"
-    fallbackBox.BackgroundTransparency = 1
-    fallbackBox.BorderSizePixel = 0
-    fallbackBox.Size = UDim2.new(0.28, 0, 0.55, 0)
-    fallbackBox.Position = UDim2.new(0.36, 0, 0.28, 0)
-    fallbackBox.ZIndex = 257
-    fallbackBox.Parent = viewport
-    local fbStroke = Instance.new("UIStroke", fallbackBox)
-    fbStroke.Color = Library.AccentColor
-    fbStroke.Thickness = 1.5
+    local world = Instance.new("WorldModel")
+    world.Parent = vp
+    local cam = Instance.new("Camera")
+    cam.Parent = vp
+    vp.CurrentCamera = cam
 
-    local fallbackName = Instance.new("TextLabel")
-    fallbackName.Name = "NameLabel"
-    fallbackName.BackgroundTransparency = 1
-    fallbackName.Size = UDim2.new(1, 0, 0, 16)
-    fallbackName.Position = UDim2.new(0, 0, 0, -18)
-    fallbackName.Font = Library.Font
-    fallbackName.TextSize = 12
-    fallbackName.Text = "Player"
-    fallbackName.TextColor3 = Library.AccentColor
-    fallbackName.ZIndex = 258
-    fallbackName.Parent = fallbackBox
+    local root = Instance.new("Part")
+    root.Anchored = true
+    root.CanCollide = false
+    root.Size = Vector3.new(1.2, 2.4, 0.7)
+    root.Color = Color3.fromRGB(90, 90, 100)
+    root.Material = Enum.Material.SmoothPlastic
+    root.CFrame = CFrame.new(0, 1.2, 0)
+    root.Parent = world
 
-    local fallbackHealth = Instance.new("Frame")
-    fallbackHealth.Name = "Health"
-    fallbackHealth.BackgroundColor3 = Color3.fromRGB(60, 220, 90)
-    fallbackHealth.BorderSizePixel = 0
-    fallbackHealth.Size = UDim2.new(0, 3, 0.72, 0)
-    fallbackHealth.Position = UDim2.new(0, -6, 0.28, 0)
-    fallbackHealth.ZIndex = 258
-    fallbackHealth.Parent = fallbackBox
+    local head = Instance.new("Part")
+    head.Anchored = true
+    head.CanCollide = false
+    head.Shape = Enum.PartType.Ball
+    head.Size = Vector3.new(0.9, 0.9, 0.9)
+    head.Color = Color3.fromRGB(120, 110, 100)
+    head.Material = Enum.Material.SmoothPlastic
+    head.CFrame = CFrame.new(0, 2.7, 0)
+    head.Parent = world
 
-    local fallbackTracer = Instance.new("Frame")
-    fallbackTracer.Name = "Tracer"
-    fallbackTracer.BackgroundColor3 = Library.AccentColor
-    fallbackTracer.BorderSizePixel = 0
-    fallbackTracer.AnchorPoint = Vector2.new(0.5, 1)
-    fallbackTracer.Position = UDim2.new(0.5, 0, 1, -2)
-    fallbackTracer.Size = UDim2.new(0, 1, 0.22, 0)
-    fallbackTracer.Rotation = 0
-    fallbackTracer.ZIndex = 257
-    fallbackTracer.Parent = viewport
+    cam.CFrame = CFrame.new(Vector3.new(0, 1.6, 5.5), Vector3.new(0, 1.4, 0))
 
-    Library._ESPPreviewFallback = {
-        Box = fallbackBox,
-        NameLabel = fallbackName,
-        Health = fallbackHealth,
-        Tracer = fallbackTracer,
-        Visible = function(_, v)
-            fallbackBox.Visible = v
-            fallbackName.Visible = v
-            fallbackHealth.Visible = v
-            fallbackTracer.Visible = v
-        end,
+    -- Overlay
+    local overlay = Instance.new("Frame")
+    overlay.BackgroundTransparency = 1
+    overlay.Position = UDim2.new(0, 0, 0, 22)
+    overlay.Size = UDim2.new(1, 0, 1, -50)
+    overlay.ZIndex = 270
+    overlay.Parent = panel
+
+    local box = Instance.new("Frame")
+    box.BackgroundTransparency = 1
+    box.BorderSizePixel = 0
+    box.Size = UDim2.new(0.42, 0, 0.72, 0)
+    box.Position = UDim2.new(0.29, 0, 0.14, 0)
+    box.ZIndex = 271
+    box.Parent = overlay
+    local boxStroke = Instance.new("UIStroke", box)
+    boxStroke.Color = Color3.fromRGB(255, 255, 255)
+    boxStroke.Thickness = 2
+
+    local corners = Instance.new("Frame")
+    corners.BackgroundTransparency = 1
+    corners.Size = UDim2.new(0.42, 0, 0.72, 0)
+    corners.Position = UDim2.new(0.29, 0, 0.14, 0)
+    corners.ZIndex = 271
+    corners.Parent = overlay
+    local cornersSpec = {
+        {0, 0, 0.3, 0.015, 0, 0}, {0, 0, 0.015, 0.22, 0, 0},
+        {1, 0, 0.3, 0.015, 1, 0}, {1, 0, 0.015, 0.22, 1, 0},
+        {0, 1, 0.3, 0.015, 0, 1}, {0, 1, 0.015, 0.22, 0, 1},
+        {1, 1, 0.3, 0.015, 1, 1}, {1, 1, 0.015, 0.22, 1, 1},
     }
-    -- allow .Visible = bool
-    setmetatable(Library._ESPPreviewFallback, {
-        __newindex = function(t, k, v)
-            if k == "Visible" then
-                fallbackBox.Visible = v
-                fallbackName.Visible = v
-                fallbackHealth.Visible = v
-                fallbackTracer.Visible = v
-            else
-                rawset(t, k, v)
-            end
-        end,
-        __index = function(t, k)
-            if k == "Visible" then return fallbackBox.Visible end
-            return rawget(t, k)
-        end,
-    })
+    for _, s in ipairs(cornersSpec) do
+        local f = Instance.new("Frame")
+        f.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        f.BorderSizePixel = 0
+        f.Position = UDim2.new(s[1], 0, s[2], 0)
+        f.Size = UDim2.new(s[3], 0, s[4], 0)
+        f.AnchorPoint = Vector2.new(s[5], s[6])
+        f.ZIndex = 272
+        f.Parent = corners
+    end
 
-    local togglesRow = Instance.new("Frame")
-    togglesRow.BackgroundTransparency = 1
-    togglesRow.Position = UDim2.new(0, 8, 1, -36)
-    togglesRow.Size = UDim2.new(1, -16, 0, 28)
-    togglesRow.ZIndex = 256
-    togglesRow.Parent = panel
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Size = UDim2.new(0.5, 0, 0, 14)
+    nameLabel.Position = UDim2.new(0.25, 0, 0.06, 0)
+    nameLabel.Font = Library.Font
+    nameLabel.TextSize = 12
+    nameLabel.Text = "Player"
+    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLabel.ZIndex = 272
+    nameLabel.Parent = overlay
 
-    local function makeChip(text, key, order)
+    local health = Instance.new("Frame")
+    health.BackgroundColor3 = Color3.fromRGB(60, 220, 90)
+    health.BorderSizePixel = 0
+    health.Size = UDim2.new(0, 3, 0.5, 0)
+    health.Position = UDim2.new(0.29, -6, 0.28, 0)
+    health.ZIndex = 272
+    health.Parent = overlay
+
+    local tracer = Instance.new("Frame")
+    tracer.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    tracer.BorderSizePixel = 0
+    tracer.AnchorPoint = Vector2.new(0.5, 1)
+    tracer.Position = UDim2.new(0.5, 0, 1, 0)
+    tracer.Size = UDim2.new(0, 1, 0.14, 0)
+    tracer.Visible = false
+    tracer.ZIndex = 271
+    tracer.Parent = overlay
+
+    -- chips
+    local chips = Instance.new("Frame")
+    chips.BackgroundTransparency = 1
+    chips.Position = UDim2.new(0, 0, 1, -22)
+    chips.Size = UDim2.new(1, 0, 0, 22)
+    chips.ZIndex = 256
+    chips.Parent = panel
+
+    local function chip(text, key, order)
         local b = Instance.new("TextButton")
-        b.Size = UDim2.new(0, 52, 0, 24)
-        b.Position = UDim2.new(0, (order - 1) * 56, 0, 2)
+        b.Size = UDim2.new(0, 48, 0, 20)
+        b.Position = UDim2.new(0, (order - 1) * 52, 0, 0)
         b.BackgroundColor3 = Color3.fromRGB(28, 30, 38)
         b.BorderSizePixel = 0
         b.Font = Library.Font
@@ -7573,59 +7607,41 @@ function Library:CreateESPPreview(config)
         b.Text = text
         b.TextColor3 = Color3.fromRGB(220, 220, 230)
         b.ZIndex = 257
-        b.Parent = togglesRow
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+        b.Parent = chips
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
         local function paint()
-            local on = Library.ESPPreviewSettings[key]
-            b.BackgroundColor3 = on and Color3.fromRGB(0, 90, 160) or Color3.fromRGB(28, 30, 38)
+            b.BackgroundColor3 = Library.ESPPreviewSettings[key] and Color3.fromRGB(0, 90, 160) or Color3.fromRGB(28, 30, 38)
         end
         paint()
         b.MouseButton1Click:Connect(function()
             Library.ESPPreviewSettings[key] = not Library.ESPPreviewSettings[key]
             paint()
-            Library:_RefreshESPPreview()
+            Library:_RefreshESPPreviewOverlays()
         end)
     end
-    makeChip("Box", "Box", 1)
-    makeChip("Name", "Name", 2)
-    makeChip("HP", "Health", 3)
-    makeChip("Line", "Tracer", 4)
+    chip("Box", "Box", 1)
+    chip("Corner", "Corners", 2)
+    chip("Name", "Name", 3)
+    chip("HP", "Health", 4)
+    chip("Line", "Tracer", 5)
 
     Library._ESPPreviewPanel = panel
-    Library._ESPPreviewViewport = viewport
+    Library._ESPPreviewOverlay = {
+        Box = box,
+        Corners = corners,
+        NameLabel = nameLabel,
+        Health = health,
+        Tracer = tracer,
+    }
 
-    pcall(function()
-        Library:MakeDraggable(panel, 28, false)
-    end)
-
-    -- Keep drawings aligned when panel moves / resizes
-    if not Library._ESPPreviewRenderBound then
-        Library._ESPPreviewRenderBound = true
-        Library:GiveSignal(RunService.RenderStepped:Connect(function()
-            if Library.ESPPreviewEnabled and Library.ESPPreviewVisible then
-                -- light refresh only if panel exists (Drawing positions are screen-space)
-                if Library._ESPPreviewPanel and Library._ESPPreviewPanel.Visible then
-                    -- throttle: update every few frames via counter
-                    Library._ESPPreviewFrame = (Library._ESPPreviewFrame or 0) + 1
-                    if Library._ESPPreviewFrame % 10 == 0 then
-                        Library:_RefreshESPPreview()
-                    end
-                end
-            end
-        end))
-    end
-
-    task.defer(function()
-        Library:_RefreshESPPreview()
-    end)
-
+    pcall(function() Library:MakeDraggable(panel, 28, false) end)
+    Library:_RefreshESPPreviewOverlays()
     return panel
 end
 
 function Library:EnableESPPreview(config)
     return Library:CreateESPPreview(config)
 end
-
 
 if getgenv().skip_getgenv_linoria ~= true then getgenv().Library = Library end
 return Library
