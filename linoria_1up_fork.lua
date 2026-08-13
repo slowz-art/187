@@ -127,6 +127,9 @@ local Library = {
     NotifySide = "Left";
     ShowCustomCursor = false; -- default off (no blue triangle cursor)
     ShowToggleFrameInKeybinds = true;
+    ShowKeybindHints = true; -- PC keybind shower when enabling bindable features
+    UITransparency = 0; -- 0 = solid, up to ~0.6 glass
+    Favorites = {};
     NotifyOnError = false; -- true = Library:Notify for SafeCallback (still warns in the developer console)
 
     VideoLink = "";
@@ -3525,6 +3528,7 @@ do
                 return;
             end;
 
+            local Was = Toggle.Value;
             Bool = (not not Bool);
 
             Toggle.Value = Bool;
@@ -3542,8 +3546,43 @@ do
                 Library:SafeCallback(Toggle.Changed, Toggle.Value);
             end;
 
+            -- PC keybind shower: when enabling a feature that has a keybind
+            if Bool and not Was and Library.ShowKeybindHints and not Library.IsMobile then
+                for _, Addon in next, Toggle.Addons do
+                    if Addon.Type == 'KeyPicker' then
+                        pcall(function()
+                            Library:ShowKeybindHint(Toggle.Text or Toggle.OriginalText or 'Feature', Addon.Value, Addon.Mode)
+                        end)
+                    end
+                end
+            end
+
             Library:UpdateDependencyBoxes();
+            pcall(function() if Library.RefreshFavoritesPanel then Library:RefreshFavoritesPanel() end end);
         end;
+
+        function Toggle:SetFavorite(on)
+            local idx = nil
+            for k, v in pairs(Toggles) do
+                if v == Toggle then idx = k; break end
+            end
+            if not idx then return end
+            Library.Favorites = Library.Favorites or {}
+            if on then
+                Library.Favorites[idx] = true
+            else
+                Library.Favorites[idx] = nil
+            end
+            pcall(function() if Library.RefreshFavoritesPanel then Library:RefreshFavoritesPanel() end end)
+        end
+
+        function Toggle:IsFavorite()
+            local idx = nil
+            for k, v in pairs(Toggles) do
+                if v == Toggle then idx = k; break end
+            end
+            return idx and Library.Favorites and Library.Favorites[idx] == true
+        end
 
         function Toggle:SetVisible(Visibility)
             Toggle.Visible = Visibility;
@@ -3602,6 +3641,29 @@ do
         setmetatable(Toggle, BaseAddons);
 
         Toggles[Idx] = Toggle;
+
+        -- Favorite pin (★) — sits in the toggle addon row (right of label)
+        pcall(function()
+            local Star = Library:Create('TextButton', {
+                BackgroundTransparency = 1;
+                Size = UDim2.new(0, 18, 0, 18);
+                Text = (Library.Favorites and Library.Favorites[Idx]) and '★' or '☆';
+                TextColor3 = (Library.Favorites and Library.Favorites[Idx]) and Library.AccentColor or Library.DisabledTextColor;
+                TextSize = 14;
+                Font = Library.Font;
+                ZIndex = 10;
+                AutoButtonColor = false;
+                LayoutOrder = -1;
+                Parent = ToggleLabel;
+            });
+            Toggle.FavoriteButton = Star;
+            Star.MouseButton1Click:Connect(function()
+                local fav = not (Library.Favorites and Library.Favorites[Idx]);
+                Toggle:SetFavorite(fav);
+                Star.Text = fav and '★' or '☆';
+                Star.TextColor3 = fav and Library.AccentColor or Library.DisabledTextColor;
+            end);
+        end);
 
         Library:UpdateDependencyBoxes();
 
@@ -7766,8 +7828,66 @@ local SaveManager = {} do
             end
         end)
 
+        section:AddDivider()
+
+        section:AddButton("Export config (clipboard)", function()
+            local name = self.Library.Options.SaveManager_ConfigList.Value
+            local payload
+            if name and name ~= "" then
+                local file = self.Folder .. "/settings/" .. name .. ".json"
+                if self:CheckSubFolder(true) then
+                    file = self.Folder .. "/settings/" .. self.SubFolder .. "/" .. name .. ".json"
+                end
+                payload = sm_readfile(file)
+            end
+            if not payload or payload == "" then
+                payload = self.Library:GetConfig()
+            end
+            local ok = pcall(function() setclipboard(tostring(payload)) end)
+            if ok then
+                self.Library:Notify("Config exported to clipboard", 2)
+            else
+                self.Library:Notify("setclipboard failed", 2)
+            end
+        end)
+
+        section:AddInput("SaveManager_ImportBox", {
+            Text = "Import config string",
+            Default = "",
+            Placeholder = "Paste config JSON here...",
+            Finished = true,
+            Callback = function() end,
+        })
+
+        section:AddButton("Import config (from box)", function()
+            local raw = self.Library.Options.SaveManager_ImportBox and self.Library.Options.SaveManager_ImportBox.Value
+            if not raw or tostring(raw):gsub("%s", "") == "" then
+                self.Library:Notify("Paste a config into Import box first", 2)
+                return
+            end
+            local okDecode = pcall(function()
+                HttpService:JSONDecode(tostring(raw))
+            end)
+            if not okDecode then
+                self.Library:Notify("Invalid JSON config", 2)
+                return
+            end
+            -- If it looks like Linoria objects format, load via parser path
+            local success, decoded = pcall(HttpService.JSONDecode, HttpService, tostring(raw))
+            if success and type(decoded) == "table" and decoded.objects then
+                for _, option in ipairs(decoded.objects) do
+                    if option.type and self.Parser[option.type] and not self.Ignore[option.idx] then
+                        task.spawn(self.Parser[option.type].Load, option.idx, option)
+                    end
+                end
+            else
+                self.Library:LoadConfig(tostring(raw))
+            end
+            self.Library:Notify("Config imported", 2)
+        end)
+
         self.AutoloadConfigLabel = section:AddLabel("Current autoload config: " .. self:GetAutoloadConfig(), true)
-        self:SetIgnoreIndexes({ "SaveManager_ConfigList", "SaveManager_ConfigName" })
+        self:SetIgnoreIndexes({ "SaveManager_ConfigList", "SaveManager_ConfigName", "SaveManager_ImportBox" })
     end
 end
 
@@ -8073,5 +8193,288 @@ task.defer(function()
         end
     end)
 end)
+
+-- ===================== TRANSPARENCY =====================
+function Library:SetUITransparency(amount)
+    amount = math.clamp(tonumber(amount) or 0, 0, 0.65)
+    Library.UITransparency = amount
+    local Window = Library.Window
+    if not Window then return end
+
+    local function apply(inst, extra)
+        if not inst or not inst.Parent then return end
+        pcall(function()
+            if inst:IsA("Frame") or inst:IsA("TextButton") then
+                -- keep fully invisible frames invisible
+                if inst.BackgroundTransparency < 0.95 then
+                    inst.BackgroundTransparency = amount + (extra or 0)
+                end
+            end
+        end)
+    end
+
+    pcall(function()
+        if Window.Outer then
+            for _, d in ipairs(Window.Outer:GetDescendants()) do
+                if d:IsA("Frame") and d.Name ~= "OptionSearch" and d.Name ~= "SearchResults" then
+                    if d.BackgroundTransparency < 0.9 then
+                        d.BackgroundTransparency = math.clamp(amount, 0, 0.65)
+                    end
+                end
+            end
+            if Window.Inner then
+                Window.Inner.BackgroundTransparency = amount
+            end
+        end
+    end)
+end
+
+function Library:SetTransparent(enabled)
+    Library:SetUITransparency(enabled and 0.35 or 0)
+end
+
+-- ===================== KEYBIND SHOWER (PC) =====================
+Library.ShowKeybindHints = Library.ShowKeybindHints ~= false and not Library.IsMobile
+
+function Library:ShowKeybindHint(featureName, key, mode)
+    if Library.IsMobile or Library.ShowKeybindHints == false then return end
+    featureName = tostring(featureName or "Feature")
+    key = tostring(key or "None")
+    mode = tostring(mode or "Toggle")
+
+    local keyName = key
+    if key == "MB1" then keyName = "Mouse1"
+    elseif key == "MB2" then keyName = "Mouse2"
+    elseif key == "MB3" then keyName = "Mouse3"
+    end
+
+    local modeText = mode
+    if mode == "Hold" then modeText = "HOLD"
+    elseif mode == "Toggle" then modeText = "TOGGLE"
+    elseif mode == "Always" then modeText = "ALWAYS"
+    end
+
+    -- Big paid-style keybind toast
+    local parent = ScreenGui
+    if not parent then return end
+
+    local holder = Instance.new("Frame")
+    holder.Name = "KeybindHint"
+    holder.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+    holder.BackgroundTransparency = 0.1
+    holder.BorderSizePixel = 0
+    holder.Size = UDim2.new(0, 280, 0, 64)
+    holder.Position = UDim2.new(0.5, -140, 0.12, 0)
+    holder.ZIndex = 300
+    holder.Parent = parent
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = holder
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Library.AccentColor
+    stroke.Thickness = 1.5
+    stroke.Parent = holder
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Size = UDim2.new(1, -16, 0, 22)
+    title.Position = UDim2.new(0, 12, 0, 8)
+    title.Font = Library.Font
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextColor3 = Color3.fromRGB(200, 200, 210)
+    title.Text = featureName .. " enabled"
+    title.ZIndex = 301
+    title.Parent = holder
+
+    local keyLbl = Instance.new("TextLabel")
+    keyLbl.BackgroundTransparency = 1
+    keyLbl.Size = UDim2.new(1, -16, 0, 26)
+    keyLbl.Position = UDim2.new(0, 12, 0, 30)
+    keyLbl.Font = Library.Font
+    keyLbl.TextSize = 18
+    keyLbl.TextXAlignment = Enum.TextXAlignment.Left
+    keyLbl.TextColor3 = Library.AccentColor
+    keyLbl.Text = string.format("[%s]  ·  %s", keyName, modeText)
+    keyLbl.ZIndex = 301
+    keyLbl.Parent = holder
+
+    task.delay(2.4, function()
+        pcall(function()
+            local ts = game:GetService("TweenService")
+            local t = ts:Create(holder, TweenInfo.new(0.35), { BackgroundTransparency = 1 })
+            t:Play()
+            title.TextTransparency = 1
+            keyLbl.TextTransparency = 1
+            stroke.Transparency = 1
+            t.Completed:Wait()
+            holder:Destroy()
+        end)
+    end)
+
+    -- also soft notify
+    pcall(function()
+        Library:Notify(string.format("%s → [%s] (%s)", featureName, keyName, modeText), 2)
+    end)
+end
+
+-- ===================== PINNED FAVORITES PANEL =====================
+function Library:RefreshFavoritesPanel()
+    local Window = Library.Window
+    if not Window or not Window.Inner then return end
+
+    Library.Favorites = Library.Favorites or {}
+
+    local panel = Window.Inner:FindFirstChild("FavoritesPanel")
+    if not panel then
+        panel = Instance.new("Frame")
+        panel.Name = "FavoritesPanel"
+        panel.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+        panel.BackgroundTransparency = math.clamp((Library.UITransparency or 0) + 0.05, 0, 0.7)
+        panel.BorderColor3 = Library.AccentColor
+        panel.BorderSizePixel = 1
+        panel.Position = UDim2.new(0, 10, 1, -150)
+        panel.Size = UDim2.new(0, 200, 0, 140)
+        panel.ZIndex = 120
+        panel.Visible = false
+        panel.Parent = Window.Inner
+
+        local c = Instance.new("UICorner")
+        c.CornerRadius = UDim.new(0, 8)
+        c.Parent = panel
+
+        local title = Instance.new("TextLabel")
+        title.Name = "Title"
+        title.BackgroundTransparency = 1
+        title.Size = UDim2.new(1, -12, 0, 20)
+        title.Position = UDim2.new(0, 8, 0, 4)
+        title.Font = Library.Font
+        title.TextSize = 13
+        title.TextColor3 = Library.AccentColor
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Text = "★ Pinned"
+        title.ZIndex = 121
+        title.Parent = panel
+
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Name = "List"
+        scroll.BackgroundTransparency = 1
+        scroll.BorderSizePixel = 0
+        scroll.Position = UDim2.new(0, 6, 0, 26)
+        scroll.Size = UDim2.new(1, -12, 1, -32)
+        scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+        scroll.ScrollBarThickness = 3
+        scroll.ZIndex = 121
+        scroll.Parent = panel
+
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 3)
+        layout.Parent = scroll
+    end
+
+    local scroll = panel:FindFirstChild("List")
+    if not scroll then return end
+    for _, child in ipairs(scroll:GetChildren()) do
+        if child:IsA("TextButton") then child:Destroy() end
+    end
+
+    local count = 0
+    for idx, on in pairs(Library.Favorites) do
+        if on and Toggles[idx] then
+            count += 1
+            local toggle = Toggles[idx]
+            local btn = Instance.new("TextButton")
+            btn.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+            btn.BorderSizePixel = 0
+            btn.Size = UDim2.new(1, 0, 0, 24)
+            btn.Font = Library.Font
+            btn.TextSize = 12
+            btn.TextXAlignment = Enum.TextXAlignment.Left
+            btn.AutoButtonColor = true
+            btn.ZIndex = 122
+            local state = toggle.Value and "ON" or "OFF"
+            local col = toggle.Value and Color3.fromRGB(120, 255, 140) or Color3.fromRGB(220, 220, 230)
+            btn.Text = string.format("  %s  [%s]", tostring(toggle.Text or idx), state)
+            btn.TextColor3 = col
+            btn.Parent = scroll
+            local bc = Instance.new("UICorner")
+            bc.CornerRadius = UDim.new(0, 4)
+            bc.Parent = btn
+            btn.MouseButton1Click:Connect(function()
+                if toggle.SetValue then
+                    toggle:SetValue(not toggle.Value)
+                end
+            end)
+            btn.MouseButton2Click:Connect(function()
+                -- right click unpin
+                toggle:SetFavorite(false)
+                if toggle.FavoriteButton then
+                    toggle.FavoriteButton.Text = "☆"
+                    toggle.FavoriteButton.TextColor3 = Library.DisabledTextColor
+                end
+            end)
+        end
+    end
+
+    panel.Visible = count > 0
+    scroll.CanvasSize = UDim2.new(0, 0, 0, count * 27)
+    if count > 0 then
+        panel.Size = UDim2.new(0, 200, 0, math.clamp(30 + count * 27, 60, 160))
+    end
+end
+
+-- Hook window open to apply transparency default from Config if set
+do
+    local oldAttach = Library.AttachOptionSearch
+    Library.AttachOptionSearch = function(Window)
+        if oldAttach then oldAttach(Window) end
+        pcall(function()
+            if Library.UITransparency and Library.UITransparency > 0 then
+                Library:SetUITransparency(Library.UITransparency)
+            end
+            Library:RefreshFavoritesPanel()
+        end)
+    end
+end
+
+-- Menu helpers for Settings scripts
+function Library:BuildUIExtrasSection(tab)
+    if not tab then return end
+    local box = tab:AddLeftGroupbox("UI Extras")
+
+    box:AddToggle("UI_Transparent", {
+        Text = "Transparent UI",
+        Default = (Library.UITransparency or 0) > 0.05,
+        Callback = function(v)
+            Library:SetTransparent(v)
+        end,
+    })
+
+    box:AddSlider("UI_TransparencyAmount", {
+        Text = "Transparency Amount",
+        Default = math.floor((Library.UITransparency or 0.35) * 100),
+        Min = 0,
+        Max = 60,
+        Rounding = 0,
+        Callback = function(v)
+            Library:SetUITransparency((tonumber(v) or 0) / 100)
+        end,
+    })
+
+    if not Library.IsMobile then
+        box:AddToggle("UI_KeybindHints", {
+            Text = "Keybind Shower",
+            Default = Library.ShowKeybindHints ~= false,
+            Callback = function(v)
+                Library.ShowKeybindHints = v and true or false
+            end,
+        })
+    end
+
+    box:AddLabel("★ on toggles = pin to favorites")
+    box:AddLabel("Right-click pinned = unpin")
+end
 
 return Library
