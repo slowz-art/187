@@ -7874,21 +7874,44 @@ local function attachSearchToWindow(Window, Outer, Inner)
         end
     end
 
+    -- Strict match: only starts-with on full text, flag, or any word (not random mid-letter hits)
+    local function matchesQuery(text, idx, query)
+        if not query or #query < 2 then return false end
+        text = string.lower(tostring(text or ""))
+        idx = string.lower(tostring(idx or ""))
+        query = string.lower(query)
+
+        if text:sub(1, #query) == query then return true end
+        if idx:sub(1, #query) == query then return true end
+
+        for word in text:gmatch("%S+") do
+            if word:sub(1, #query) == query then return true end
+        end
+        for word in idx:gmatch("[A-Za-z0-9]+") do
+            if word:sub(1, #query) == query then return true end
+        end
+        return false
+    end
+
     local function collectResults(query)
-        query = string.lower(tostring(query or ""))
+        query = tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", "")
         local results = {}
+        if #query < 2 then return results end
+
         for idx, toggle in pairs(Toggles) do
             if type(idx) == "string" and toggle then
                 local text = tostring(toggle.Text or toggle.OriginalText or idx)
-                if query ~= "" and (text:lower():find(query, 1, true) or idx:lower():find(query, 1, true)) then
+                if matchesQuery(text, idx, query) then
                     results[#results + 1] = { Text = text, Sub = "Toggle", Object = toggle }
                 end
             end
         end
         for idx, option in pairs(Options) do
             if type(idx) == "string" and option then
+                -- skip internal config/search controls
+                if idx:find("SaveManager_", 1, true) then continue end
                 local text = tostring(option.Text or option.OriginalText or idx)
-                if query ~= "" and (text:lower():find(query, 1, true) or idx:lower():find(query, 1, true)) then
+                if matchesQuery(text, idx, query) then
                     results[#results + 1] = { Text = text, Sub = tostring(option.Type or "Option"), Object = option }
                 end
             end
@@ -7897,26 +7920,65 @@ local function attachSearchToWindow(Window, Outer, Inner)
         return results
     end
 
+    local function scrollParentTo(obj)
+        if not obj then return end
+        local scroll = obj:FindFirstAncestorOfClass("ScrollingFrame")
+        if not scroll then return end
+        local absPos = obj.AbsolutePosition.Y
+        local scrollPos = scroll.AbsolutePosition.Y
+        local rel = absPos - scrollPos + scroll.CanvasPosition.Y - 40
+        scroll.CanvasPosition = Vector2.new(0, math.max(0, rel))
+    end
+
     local function jumpTo(entry)
         if not entry or not entry.Object then return end
-        local label = entry.Object.TextLabel
-        if label and label.Parent then
-            for _, tab in ipairs(Window.Tabs or {}) do
-                if tab.TabFrame and label:IsDescendantOf(tab.TabFrame) then
-                    pcall(function()
-                        if tab.ShowTab then tab:ShowTab() elseif tab.Show then tab:Show() end
-                    end)
+        local label = entry.Object.TextLabel or entry.Object.Container
+        local foundTab = nil
+
+        -- Window.Tabs is a dictionary { [Name] = Tab }, not an array
+        if label and typeof(label) == "Instance" and label.Parent then
+            for _, tab in pairs(Window.Tabs or {}) do
+                if type(tab) == "table" and tab.TabFrame and label:IsDescendantOf(tab.TabFrame) then
+                    foundTab = tab
                     break
                 end
             end
-            local old = label.TextColor3
+        elseif entry.Object.Container and typeof(entry.Object.Container) == "Instance" then
+            for _, tab in pairs(Window.Tabs or {}) do
+                if type(tab) == "table" and tab.TabFrame and entry.Object.Container:IsDescendantOf(tab.TabFrame) then
+                    foundTab = tab
+                    label = entry.Object.Container
+                    break
+                end
+            end
+        end
+
+        if foundTab then
             pcall(function()
-                label.TextColor3 = Library.AccentColor
-                task.delay(0.7, function()
-                    if label and label.Parent then label.TextColor3 = old end
-                end)
+                if foundTab.ShowTab then
+                    foundTab:ShowTab()
+                elseif foundTab.Show then
+                    foundTab:Show()
+                end
             end)
         end
+
+        task.defer(function()
+            local target = entry.Object.TextLabel or entry.Object.Container
+            if target and typeof(target) == "Instance" and target.Parent then
+                scrollParentTo(target)
+                if target:IsA("TextLabel") or target:IsA("TextButton") then
+                    local old = target.TextColor3
+                    pcall(function()
+                        target.TextColor3 = Library.AccentColor
+                        task.delay(0.8, function()
+                            if target and target.Parent then target.TextColor3 = old end
+                        end)
+                    end)
+                end
+            end
+        end)
+
         Library:Notify("Found: " .. tostring(entry.Text), 1.5)
         Results.Visible = false
         SearchBox.Text = ""
@@ -7924,13 +7986,14 @@ local function attachSearchToWindow(Window, Outer, Inner)
 
     local function showResults(query)
         clearResults()
-        if not query or query:gsub("%s", "") == "" then
+        local q = tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if #q < 2 then
             Results.Visible = false
             Results.Size = UDim2.new(0, 220, 0, 0)
             return
         end
 
-        local results = collectResults(query)
+        local results = collectResults(q)
         local maxShow = math.min(#results, 10)
 
         if maxShow == 0 then
